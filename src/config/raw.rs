@@ -1,0 +1,215 @@
+use std::{net::SocketAddr, str::FromStr};
+
+use rust_decimal::Decimal;
+use serde::Deserialize;
+
+use super::address::{normalize_address, trim_url};
+use super::types::{Config, SignerConfig};
+use crate::{NodeError, Result};
+
+const DEFAULT_ALLOWED_TEMPLATES: &[&str] = &["withdraw3", "sub_account_withdraw3"];
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RawConfig {
+    gateway_url: String,
+    hl_api_url: String,
+    #[serde(default = "default_poll_interval_secs")]
+    poll_interval_secs: u64,
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default = "default_allowed_templates")]
+    allowed_templates: Vec<String>,
+    #[serde(default)]
+    allowed_creators: Vec<String>,
+    state_db: String,
+    #[serde(default = "default_debug_http_addr")]
+    debug_http_addr: String,
+    signer: RawSignerConfig,
+    leader: String,
+    multisig: String,
+    withdraw_limit: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawSignerConfig {
+    keystore_path: String,
+    #[serde(default)]
+    password_env: Option<String>,
+}
+
+fn default_poll_interval_secs() -> u64 {
+    15
+}
+
+fn default_debug_http_addr() -> String {
+    "127.0.0.1:9909".to_string()
+}
+
+fn default_allowed_templates() -> Vec<String> {
+    DEFAULT_ALLOWED_TEMPLATES
+        .iter()
+        .map(|template| (*template).to_string())
+        .collect()
+}
+
+impl RawConfig {
+    pub(super) fn validate(self) -> Result<Config> {
+        if self.gateway_url.trim().is_empty() {
+            return Err(NodeError::Config("gateway_url is required".to_string()));
+        }
+        if self.hl_api_url.trim().is_empty() {
+            return Err(NodeError::Config("hl_api_url is required".to_string()));
+        }
+        if self.state_db.trim().is_empty() {
+            return Err(NodeError::Config("state_db is required".to_string()));
+        }
+        let allowed_templates = normalize_allowed_templates(self.allowed_templates)?;
+        if self.signer.keystore_path.trim().is_empty() {
+            return Err(NodeError::Config(
+                "signer.keystore_path is required".to_string(),
+            ));
+        }
+        let leader = normalize_address(&self.leader)?;
+        let multisig = normalize_address(&self.multisig)?;
+        let allowed_creators = normalize_allowed_creators(self.allowed_creators, &leader)
+            .map_err(NodeError::Config)?;
+        let withdraw_limit = Decimal::from_str(self.withdraw_limit.trim()).map_err(|err| {
+            NodeError::Config(format!("withdraw_limit must be a decimal string: {err}"))
+        })?;
+        if withdraw_limit.is_sign_negative() {
+            return Err(NodeError::Config(
+                "withdraw_limit must be non-negative".to_string(),
+            ));
+        }
+        let debug_http_addr = self.debug_http_addr.parse::<SocketAddr>().map_err(|err| {
+            NodeError::Config(format!("debug_http_addr must be host:port: {err}"))
+        })?;
+
+        Ok(Config {
+            gateway_url: trim_url(&self.gateway_url),
+            hl_api_url: trim_url(&self.hl_api_url),
+            poll_interval_secs: self.poll_interval_secs,
+            dry_run: self.dry_run,
+            allowed_templates,
+            allowed_creators,
+            state_db: self.state_db,
+            debug_http_addr,
+            signer: SignerConfig {
+                keystore_path: self.signer.keystore_path,
+                password_env: self
+                    .signer
+                    .password_env
+                    .filter(|value| !value.trim().is_empty()),
+            },
+            leader,
+            multisig,
+            withdraw_limit,
+        })
+    }
+}
+
+fn normalize_allowed_creators(
+    creators: Vec<String>,
+    default_creator: &str,
+) -> std::result::Result<Vec<String>, String> {
+    if creators.is_empty() {
+        return Ok(vec![default_creator.to_string()]);
+    }
+    let mut deduped = Vec::with_capacity(creators.len());
+    for creator in creators {
+        let creator = normalize_address(&creator).map_err(|err| err.to_string())?;
+        if !deduped.iter().any(|existing| existing == &creator) {
+            deduped.push(creator);
+        }
+    }
+    Ok(deduped)
+}
+
+fn normalize_allowed_templates(templates: Vec<String>) -> Result<Vec<String>> {
+    if templates.is_empty() {
+        return Err(NodeError::Config(
+            "allowed_templates must contain at least one template id".to_string(),
+        ));
+    }
+    let mut deduped = Vec::with_capacity(templates.len());
+    for template in templates {
+        let template = template.trim();
+        if template.is_empty() {
+            return Err(NodeError::Config(
+                "allowed_templates must not contain empty template ids".to_string(),
+            ));
+        }
+        if !deduped.iter().any(|existing| existing == template) {
+            deduped.push(template.to_string());
+        }
+    }
+    Ok(deduped)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::RawConfig;
+
+    fn base_config() -> serde_json::Value {
+        json!({
+            "gateway_url": "http://gateway",
+            "hl_api_url": "http://hl",
+            "state_db": "sqlite::memory:",
+            "signer": {
+                "keystore_path": "config/signer.json"
+            },
+            "leader": "0x0000000000000000000000000000000000000001",
+            "multisig": "0x0000000000000000000000000000000000000002",
+            "withdraw_limit": "1000"
+        })
+    }
+
+    #[test]
+    fn defaults_allowed_templates_when_missing() {
+        let raw: RawConfig = serde_json::from_value(base_config()).unwrap();
+        let config = raw.validate().unwrap();
+
+        assert_eq!(
+            config.allowed_templates,
+            ["withdraw3".to_string(), "sub_account_withdraw3".to_string()]
+        );
+        assert!(config.debug_http_addr.ip().is_loopback());
+    }
+
+    #[test]
+    fn deduplicates_allowed_templates() {
+        let mut value = base_config();
+        value["allowed_templates"] = json!(["withdraw3", " withdraw3 ", "send_asset"]);
+        let raw: RawConfig = serde_json::from_value(value).unwrap();
+        let config = raw.validate().unwrap();
+
+        assert_eq!(
+            config.allowed_templates,
+            ["withdraw3".to_string(), "send_asset".to_string()]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_allowed_templates() {
+        let mut value = base_config();
+        value["allowed_templates"] = json!([]);
+        let raw: RawConfig = serde_json::from_value(value).unwrap();
+
+        let err = raw.validate().unwrap_err();
+
+        assert!(err.to_string().contains("allowed_templates"));
+    }
+
+    #[test]
+    fn rejects_empty_allowed_template_item() {
+        let mut value = base_config();
+        value["allowed_templates"] = json!(["withdraw3", " "]);
+        let raw: RawConfig = serde_json::from_value(value).unwrap();
+
+        let err = raw.validate().unwrap_err();
+
+        assert!(err.to_string().contains("empty template"));
+    }
+}

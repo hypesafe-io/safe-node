@@ -1,0 +1,19 @@
+/target/
+
+# Local runtime state and secrets
+/config/*.json
+!/config/*.example.json
+!/config/example.node.json
+/data/
+.env
+*.db
+*.sqlite
+*.sqlite3
+
+docs/
+audit*
+
+# Editor and OS noise
+.DS_Store
+.vscode/
+.idea/

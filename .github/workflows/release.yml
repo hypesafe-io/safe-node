@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build Linux release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev pkg-config
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must use vMAJOR.MINOR.PATCH, got: $tag" >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          manifest_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [[ "$manifest_version" != "$version" ]]; then
+            echo "Cargo.toml version $manifest_version does not match tag version $version" >&2
+            exit 1
+          fi
+
+          asset_name="safe-node-${version}-x86_64-unknown-linux-gnu"
+          {
+            echo "RELEASE_TAG=$tag"
+            echo "RELEASE_VERSION=$version"
+            echo "ASSET_NAME=$asset_name"
+          } >> "$GITHUB_ENV"
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Verify binary version
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          version_output="$(target/release/safe-node --version)"
+          expected="safe-node ${RELEASE_VERSION}"
+          if [[ "$version_output" != "$expected" ]]; then
+            echo "Expected '$expected', got '$version_output'" >&2
+            exit 1
+          fi
+
+      - name: Package
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          staging="${RUNNER_TEMP}/${ASSET_NAME}"
+          mkdir -p "$staging/config"
+
+          cp target/release/safe-node "$staging/safe-node"
+          cp README.md README.zh-CN.md "$staging/"
+          cp config/example.node.json "$staging/config/example.node.json"
+          chmod +x "$staging/safe-node"
+
+          mkdir -p dist
+          tar -C "$RUNNER_TEMP" -czf "dist/${ASSET_NAME}.tar.gz" "$ASSET_NAME"
+          (
+            cd dist
+            sha256sum "${ASSET_NAME}.tar.gz" > "${ASSET_NAME}.tar.gz.sha256"
+          )
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "dist/${ASSET_NAME}.tar.gz" \
+            "dist/${ASSET_NAME}.tar.gz.sha256" \
+            --title "safe-node ${RELEASE_TAG}" \
+            --generate-notes

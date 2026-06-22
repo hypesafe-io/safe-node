@@ -1,0 +1,19 @@
+target/
+.git/
+.gitignore
+
+# Local runtime state and secrets must be mounted at runtime, not baked in.
+.env
+config.json
+signer.json
+config/*.json
+!config/*.example.json
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor and OS noise
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,34 @@
+[package]
+name = "safe-node"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+alloy-dyn-abi = { version = "1.6.0", features = ["eip712"] }
+alloy-primitives = { version = "1.6.0", features = ["k256"] }
+alloy-signer = { version = "2.0.5", features = ["eip712"] }
+alloy-signer-local = { version = "2.0.5", features = ["keystore", "eip712"] }
+anyhow = "1.0.102"
+axum = "0.8.9"
+clap = { version = "4.6.1", features = ["derive"] }
+crossterm = "0.29.0"
+dialoguer = "0.11.0"
+hex = "0.4.3"
+rand = "0.8.5"
+ratatui = "0.30.0"
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls"] }
+rust_decimal = "1.40.0"
+sea-orm = { version = "2.0.0-rc.40", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlx-sqlite", "with-json", "with-rust_decimal"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["preserve_order"] }
+thiserror = "2.0.18"
+tokio = { version = "1.52.3", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dependencies.hypesafe-signing-intent]
+git = "https://github.com/hypesafe-io/hypesafe-signing-intent.git"
+branch = "main"
+
+[dev-dependencies]
+tempfile = "3.27.0"

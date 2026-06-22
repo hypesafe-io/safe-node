@@ -1,0 +1,30 @@
+{
+  "gateway_url": "https://api.hypesafe.io",
+  "hl_api_url": "https://api.hyperliquid.xyz",
+  "poll_interval_secs": 3,
+  "dry_run": false,
+  "allowed_templates": [
+    "approve_sub_account_api_agent",
+    "convert_to_manual_account",
+    "convert_to_unified_account",
+    "create_sub_account",
+    "delete_risk_rule",
+    "disable_sub_account",
+    "remove_api_agent",
+    "send_asset",
+    "set_risk_rule",
+    "sub_account_transfer",
+    "update_multisig",
+    "sub_account_withdraw3",
+    "withdraw3"
+  ],
+  "state_db": "sqlite:data/node.db",
+  "debug_http_addr": "127.0.0.1:9909",
+  "signer": {
+    "keystore_path": "config/signer.json",
+    "password_env": "SAFE_NODE_KEYSTORE_PASSWORD"
+  },
+  "leader": "0x0000000000000000000000000000000000000001",
+  "multisig": "0x0000000000000000000000000000000000000002",
+  "withdraw_limit": "10"
+}
