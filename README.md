@@ -6,6 +6,28 @@ English | [中文](README.zh-CN.md)
 
 It pulls tasks for one configured multi-sig account from `safe-gateway` and handles the task templates allowed by local policy for the configured `leader`. A normal signer node only co-signs. If the local signer equals the configured `leader`, the node also submits Hyperliquid `/exchange` requests for on-chain templates and writes results back to the gateway.
 
+## Install
+
+Install the latest release by downloading the installer script from this
+repository. The script then downloads the matching release archive, verifies its
+SHA-256 checksum, and unpacks it locally:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | bash
+```
+
+Install a specific release tag:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_TAG=v0.1.0 bash
+```
+
+Choose the install directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_INSTALL_DIR="$HOME/safe-node" bash
+```
+
 ## Features
 
 - JSON config, default path: `config/node.json`.
@@ -153,33 +175,3 @@ and asks before pushing:
 Pushing the tag starts the GitHub Actions release workflow. The workflow builds
 the Linux x86_64 binary, verifies `safe-node --version`, and uploads the release
 archive plus its SHA-256 checksum.
-
-Install the latest release by downloading the installer script from this
-repository. The script then downloads the matching release archive, verifies its
-SHA-256 checksum, and unpacks it locally:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | bash
-```
-
-Install a specific release tag:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_TAG=v0.1.0 bash
-```
-
-Choose the install directory:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_INSTALL_DIR="$HOME/safe-node" bash
-```
-
-The public repository does not require a token. For a private fork or GitHub API
-rate limits, pass a token to both the script download and release download:
-
-```bash
-curl -fsSL \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh \
-  | GITHUB_TOKEN="$GITHUB_TOKEN" bash
-```

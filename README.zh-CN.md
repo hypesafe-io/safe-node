@@ -6,6 +6,27 @@
 
 它从 `safe-gateway` 拉取指定 multi-sig 的任务，并按本地规则处理指定 `leader` 下被允许的 task template。普通 signer 节点只协签；当本机 signer 等于 `leader` 时，该节点还会为链上模板提交 Hyperliquid `/exchange` 并把结果写回 gateway。
 
+## 安装
+
+从当前仓库用 `curl` 下载安装脚本，脚本会自动识别 latest release，下载对应的
+release archive，校验 SHA-256 后解包到本地：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | bash
+```
+
+安装指定 tag：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_TAG=v0.1.0 bash
+```
+
+指定安装目录：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_INSTALL_DIR="$HOME/safe-node" bash
+```
+
 ## 功能
 
 - JSON 配置，默认读取 `config/node.json`。
@@ -141,32 +162,3 @@ docker run --detach \
 
 推送 tag 后会触发 GitHub Actions release workflow。workflow 会构建 Linux x86_64
 二进制、校验 `safe-node --version`，并上传 release archive 和 SHA-256 校验文件。
-
-从当前仓库用 `curl` 下载安装脚本，脚本会自动识别 latest release，下载对应的
-release archive，校验 SHA-256 后解包到本地：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | bash
-```
-
-安装指定 tag：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_TAG=v0.1.0 bash
-```
-
-指定安装目录：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_INSTALL_DIR="$HOME/safe-node" bash
-```
-
-当前 public 仓库不需要 token。如果使用私有 fork，或遇到 GitHub API rate limit，
-把 GitHub token 同时传给脚本下载和 release 下载：
-
-```bash
-curl -fsSL \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh \
-  | GITHUB_TOKEN="$GITHUB_TOKEN" bash
-```
