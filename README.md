@@ -34,6 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/
 - Encrypted local keystore for signer keys.
 - Keystore password can come from an environment variable; otherwise it is entered interactively at startup.
 - Template allow-list policy with an amount limit for templates that declare an `amount` field.
+- Creator allow-list policy; defaults to the configured `leader` when omitted.
 - Policy rejects are submitted to the gateway as reject votes when possible; no signing or Hyperliquid submission is performed.
 - Local SQLite state, with SQL access through SeaORM.
 - Read-only debug HTTP endpoint in the main service.
@@ -75,14 +76,18 @@ conservative:
 - `withdraw3`
 - `sub_account_withdraw3`
 
+`allowed_creators` is the task creator allow list. If omitted, it defaults to
+the configured `leader`. Set it explicitly when this node should accept tasks
+created by additional trusted addresses.
+
 ## Signing Trust Boundary
 
-Before signing, `safe-node` now verifies that gateway-provided EIP-712 typed-data
-matches the digest declared by the task/signing-payload response. This prevents
-signing a payload that does not match the task digest returned by `safe-gateway`.
-It is still a partial trust model: the node does not yet independently rebuild
-the typed-data from `template + inputs + ctx`, so `safe-gateway` remains the
-source of payload construction until that stronger validation lands.
+Before signing, `safe-node` verifies that task metadata, gateway signing
+payloads, and EIP-712 typed-data agree on the expected digest. For templates that
+include a local signing spec, the node rebuilds typed-data from
+`template + inputs + ctx`, verifies the task creator signature, and signs the
+locally rebuilt payload. For templates without a local signing spec, the node
+falls back to the gateway-provided payload after digest validation.
 
 ## Debug HTTP
 

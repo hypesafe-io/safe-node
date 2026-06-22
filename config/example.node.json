@@ -18,6 +18,9 @@
     "sub_account_withdraw3",
     "withdraw3"
   ],
+  "allowed_creators": [
+    "0x0000000000000000000000000000000000000001"
+  ],
   "state_db": "sqlite:data/node.db",
   "debug_http_addr": "127.0.0.1:9909",
   "signer": {

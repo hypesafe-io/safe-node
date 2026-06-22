@@ -33,6 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/
 - 加密 keystore，本地解密后签名。
 - keystore 密码可来自环境变量；如果环境变量为空，则启动时手动输入。
 - template allow list 风控；对声明了 `amount` 字段的模板额外应用金额限额。
+- creator allow list 风控；缺省为配置里的 `leader`。
 - policy reject 会尽量提交到 gateway 作为正式拒绝投票；不会签名，也不会提交 Hyperliquid。
 - 本地状态使用 SQLite，SQL 操作通过 SeaORM。
 - 主服务提供只读 debug HTTP。
@@ -72,12 +73,16 @@ keystore 路径和风控参数。
 - `withdraw3`
 - `sub_account_withdraw3`
 
+`allowed_creators` 是 task creator allow list。如果缺省，会自动使用配置里的
+`leader`。当 node 需要接受其他可信地址创建的 task 时，显式配置这个列表。
+
 ## 签名信任边界
 
-签名前，`safe-node` 会校验 gateway 下发的 EIP-712 typed-data 与 task /
-signing-payload 响应声明的 digest 一致，避免签下与当前 task digest 不匹配的 payload。
-这仍是部分信任模型：node 还没有从 `template + inputs + ctx` 独立重建 typed-data，
-在强校验落地前，payload 构造仍以 `safe-gateway` 为来源。
+签名前，`safe-node` 会校验 task 元数据、gateway signing payload 和 EIP-712
+typed-data 声明的 digest 是否一致。对于带本地 signing spec 的模板，node 会从
+`template + inputs + ctx` 本地重建 typed-data，校验 task creator signature，并签名
+本地重建的 payload。对于没有本地 signing spec 的模板，node 会在 digest 校验通过后
+回退使用 gateway-provided payload。
 
 ## Debug HTTP
 
