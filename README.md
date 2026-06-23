@@ -9,8 +9,9 @@ It pulls tasks for one configured multi-sig account from `safe-gateway` and hand
 ## Install
 
 Install the latest release by downloading the installer script from this
-repository. The script then downloads the matching release archive, verifies its
-SHA-256 checksum, and unpacks it locally:
+repository. The script downloads the matching release binary into the current
+directory, verifies its SHA-256 checksum, syncs `config/example.node.json` from
+the release tag, and writes `latest` plus `upgrade.sh`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | bash
@@ -28,9 +29,15 @@ Choose the install directory:
 curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_INSTALL_DIR="$HOME/safe-node" bash
 ```
 
+Upgrade an existing install in place:
+
+```bash
+./upgrade.sh
+```
+
 ## Features
 
-- JSON config, default path: `config/node.json`.
+- JSON5-compatible config, default path: `config/node.json`.
 - Encrypted local keystore for signer keys.
 - Keystore password can come from an environment variable; otherwise it is entered interactively at startup.
 - Template allow-list policy with an amount limit for templates that declare an `amount` field.
@@ -58,7 +65,7 @@ safe-node run --config config/node.json
 
 ## Config
 
-Use `config/example.node.json` as the full config template:
+Use `config/example.node.json` as the full JSON5-compatible config template:
 
 ```bash
 cp config/example.node.json config/node.json
@@ -66,6 +73,10 @@ cp config/example.node.json config/node.json
 
 Before running a node, edit the copied config and set the real `leader`,
 `multisig`, signer keystore path, and policy values.
+
+The config loader accepts JSON5 so local config files can include field
+comments and trailing commas while keeping the existing `config/node.json`
+default path.
 
 `allowed_templates` is the task template allow list. Values are plain gateway
 `template_id` strings, not a closed enum. `config/example.node.json` lists every
@@ -178,5 +189,6 @@ and asks before pushing:
 ```
 
 Pushing the tag starts the GitHub Actions release workflow. The workflow builds
-the Linux x86_64 binary, verifies `safe-node --version`, and uploads the release
-archive plus its SHA-256 checksum.
+the Linux x86_64 binary, verifies `safe-node --version`, and uploads the binary
+plus its SHA-256 checksum. Config templates are not packaged into the release
+asset; the installer syncs `config/example.node.json` from the matching tag.

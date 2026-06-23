@@ -6,7 +6,7 @@ mod types;
 
 pub(crate) use address::normalize_address;
 pub(crate) use redacted::RedactedConfig;
-pub(crate) use types::Config;
+pub(crate) use types::{Config, InputPolicyRule, TemplateInputPolicies};
 
 #[cfg(test)]
 pub(crate) use types::SignerConfig;

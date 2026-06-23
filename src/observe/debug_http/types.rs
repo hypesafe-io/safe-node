@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::config::RedactedConfig;
 use crate::state::StateStore;
@@ -34,5 +37,7 @@ pub(super) struct DebugPolicy {
     pub(super) leader: String,
     pub(super) allowed_templates: Vec<String>,
     pub(super) allowed_creators: Vec<String>,
+    pub(super) allowed_leaders: Vec<String>,
+    pub(super) template_input_policies: BTreeMap<String, BTreeMap<String, Value>>,
     pub(super) withdraw_limit: String,
 }

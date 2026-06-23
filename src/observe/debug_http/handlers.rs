@@ -46,6 +46,8 @@ async fn policy(State(state): State<DebugAppState>) -> Json<DebugPolicy> {
         leader: state.config.leader,
         allowed_templates: state.config.allowed_templates,
         allowed_creators: state.config.allowed_creators,
+        allowed_leaders: state.config.allowed_leaders,
+        template_input_policies: state.config.template_input_policies,
         withdraw_limit: state.config.withdraw_limit,
     })
 }
@@ -67,6 +69,8 @@ mod tests {
             dry_run: true,
             allowed_templates: vec!["withdraw3".to_string(), "sub_account_withdraw3".to_string()],
             allowed_creators: vec!["0x0000000000000000000000000000000000000001".to_string()],
+            allowed_leaders: vec!["0x0000000000000000000000000000000000000001".to_string()],
+            template_input_policies: Default::default(),
             state_db: "sqlite::memory:".to_string(),
             debug_http_addr: "127.0.0.1:9909".parse().unwrap(),
             signer: SignerConfig {

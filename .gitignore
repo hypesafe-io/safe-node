@@ -1,4 +1,7 @@
 /target/
+/safe-node
+/latest
+/upgrade.sh
 
 # Local runtime state and secrets
 /config/*.json

@@ -8,8 +8,9 @@
 
 ## 安装
 
-从当前仓库用 `curl` 下载安装脚本，脚本会自动识别 latest release，下载对应的
-release archive，校验 SHA-256 后解包到本地：
+从当前仓库用 `curl` 下载安装脚本，脚本会自动识别 latest release，把对应的
+release 二进制下载到当前目录，校验 SHA-256，并从 release tag 同步
+`config/example.node.json`，同时写入 `latest` 和 `upgrade.sh`：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | bash
@@ -27,9 +28,15 @@ curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/
 curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_INSTALL_DIR="$HOME/safe-node" bash
 ```
 
+原地升级已有安装：
+
+```bash
+./upgrade.sh
+```
+
 ## 功能
 
-- JSON 配置，默认读取 `config/node.json`。
+- 兼容 JSON5 的配置，默认读取 `config/node.json`。
 - 加密 keystore，本地解密后签名。
 - keystore 密码可来自环境变量；如果环境变量为空，则启动时手动输入。
 - template allow list 风控；对声明了 `amount` 字段的模板额外应用金额限额。
@@ -57,7 +64,7 @@ safe-node run --config config/node.json
 
 ## 配置
 
-使用 `config/example.node.json` 作为全量配置模板：
+使用 `config/example.node.json` 作为兼容 JSON5 的全量配置模板：
 
 ```bash
 cp config/example.node.json config/node.json
@@ -65,6 +72,9 @@ cp config/example.node.json config/node.json
 
 启动节点前，修改复制后的配置，填入真实的 `leader`、`multisig`、signer
 keystore 路径和风控参数。
+
+配置加载器接受 JSON5，因此本地配置可以包含字段注释和尾逗号，同时继续使用现有
+`config/node.json` 默认路径。
 
 `allowed_templates` 是 task template allow list。这里使用 gateway `template_id`
 字符串，不是固定枚举。`config/example.node.json` 已列出当前 gateway 暴露的全部签名模板；
@@ -166,4 +176,5 @@ docker run --detach \
 ```
 
 推送 tag 后会触发 GitHub Actions release workflow。workflow 会构建 Linux x86_64
-二进制、校验 `safe-node --version`，并上传 release archive 和 SHA-256 校验文件。
+二进制、校验 `safe-node --version`，并上传二进制和 SHA-256 校验文件。配置模板不再打进
+release 产物；安装脚本会从对应 tag 同步 `config/example.node.json`。

@@ -6,13 +6,14 @@ use serde_json::Value;
 use super::decision::PolicyDecision;
 #[cfg(test)]
 use super::decision::PolicyOutcome;
-use crate::config::{normalize_address, Config};
+use crate::config::{normalize_address, Config, InputPolicyRule, TemplateInputPolicies};
 use crate::gateway::{SubAccountRegistry, TaskView, TemplateRegistry};
 
 const RULE_MULTISIG: &str = "multisig";
 const RULE_CREATOR: &str = "creator";
 const RULE_LEADER: &str = "leader";
 const RULE_TEMPLATE: &str = "template";
+const RULE_TEMPLATE_INPUT_POLICY: &str = "template_input_policy";
 const RULE_AMOUNT: &str = "amount";
 const RULE_WITHDRAW_LIMIT: &str = "withdraw_limit";
 const RULE_TEMPLATE_ALLOW: &str = "template_allow";
@@ -49,8 +50,12 @@ pub(crate) fn evaluate(
         Ok(value) => value,
         Err(err) => return PolicyDecision::reject(RULE_LEADER, err.to_string()),
     };
-    if task_leader != config.leader {
-        return PolicyDecision::reject(RULE_LEADER, "task leader does not match config");
+    if !config
+        .allowed_leaders
+        .iter()
+        .any(|leader| leader == &task_leader)
+    {
+        return PolicyDecision::reject(RULE_LEADER, "task leader is not in allowed_leaders");
     }
 
     if !config
@@ -64,13 +69,20 @@ pub(crate) fn evaluate(
     let Some(template) = templates.by_task(task) else {
         return PolicyDecision::reject(RULE_TEMPLATE, "template metadata is unavailable");
     };
+    if let Some(rules) = config.template_input_policies.get(&task.template_id) {
+        if let Err(decision) = validate_template_input_policies(rules, task) {
+            return decision;
+        }
+    }
     if task.template_id == SEND_ASSET_TEMPLATE_ID {
         let decision = validate_send_asset_sub_accounts(&config.multisig, sub_accounts, task);
         if decision.is_reject() {
             return decision;
         }
     }
-    if !template.has_amount_field() {
+    if !template.has_amount_field()
+        || has_template_amount_policy(&config.template_input_policies, task)
+    {
         return PolicyDecision::allow(RULE_TEMPLATE_ALLOW);
     }
 
@@ -88,6 +100,97 @@ pub(crate) fn evaluate(
     }
 
     PolicyDecision::allow(RULE_WITHDRAW_LIMIT)
+}
+
+fn validate_template_input_policies(
+    rules: &std::collections::BTreeMap<String, InputPolicyRule>,
+    task: &TaskView,
+) -> std::result::Result<(), PolicyDecision> {
+    for (path, rule) in rules {
+        let field = path.trim_start_matches("inputs.");
+        match rule {
+            InputPolicyRule::DecimalMax(limit) => {
+                validate_decimal_max(field, limit, task)?;
+            }
+            InputPolicyRule::AddressAllowList(allowed) => {
+                validate_address_allowlist(field, allowed, task)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_decimal_max(
+    field: &str,
+    limit: &Decimal,
+    task: &TaskView,
+) -> std::result::Result<(), PolicyDecision> {
+    let raw = task
+        .inputs
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            PolicyDecision::reject(
+                RULE_TEMPLATE_INPUT_POLICY,
+                format!("inputs.{field} is missing or not a string"),
+            )
+        })?;
+    let amount = Decimal::from_str(raw.trim()).map_err(|err| {
+        PolicyDecision::reject(
+            RULE_TEMPLATE_INPUT_POLICY,
+            format!("inputs.{field} is invalid: {err}"),
+        )
+    })?;
+    if amount > *limit {
+        return Err(PolicyDecision::reject(
+            RULE_TEMPLATE_INPUT_POLICY,
+            format!("inputs.{field} exceeds configured maximum"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_address_allowlist(
+    field: &str,
+    allowed: &[String],
+    task: &TaskView,
+) -> std::result::Result<(), PolicyDecision> {
+    let raw = task
+        .inputs
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            PolicyDecision::reject(
+                RULE_TEMPLATE_INPUT_POLICY,
+                format!("inputs.{field} is missing or not an address"),
+            )
+        })?;
+    let address = normalize_address(raw).map_err(|err| {
+        PolicyDecision::reject(
+            RULE_TEMPLATE_INPUT_POLICY,
+            format!("inputs.{field} is invalid: {err}"),
+        )
+    })?;
+    if !allowed.iter().any(|allowed| allowed == &address) {
+        return Err(PolicyDecision::reject(
+            RULE_TEMPLATE_INPUT_POLICY,
+            format!("inputs.{field} is not in configured address allowlist"),
+        ));
+    }
+    Ok(())
+}
+
+fn has_template_amount_policy(policies: &TemplateInputPolicies, task: &TaskView) -> bool {
+    policies
+        .get(&task.template_id)
+        .map(|rules| {
+            rules
+                .values()
+                .any(|rule| matches!(rule, InputPolicyRule::DecimalMax(_)))
+        })
+        .unwrap_or(false)
 }
 
 fn validate_send_asset_sub_accounts(
@@ -170,7 +273,7 @@ mod tests {
     use serde_json::json;
 
     use super::{evaluate, PolicyOutcome};
-    use crate::config::{Config, SignerConfig};
+    use crate::config::{Config, InputPolicyRule, SignerConfig};
     use crate::gateway::{
         I18nText, SubAccountRegistry, TaskView, TemplateField, TemplateFieldType, TemplateRegistry,
         TemplateView,
@@ -189,6 +292,8 @@ mod tests {
                 "send_asset".to_string(),
             ],
             allowed_creators: vec!["0x0000000000000000000000000000000000000001".to_string()],
+            allowed_leaders: vec!["0x0000000000000000000000000000000000000001".to_string()],
+            template_input_policies: Default::default(),
             state_db: "sqlite::memory:".to_string(),
             debug_http_addr: "127.0.0.1:9909".parse().unwrap(),
             signer: SignerConfig {
@@ -322,6 +427,97 @@ mod tests {
         );
 
         assert_eq!(decision.outcome, PolicyOutcome::Reject);
+    }
+
+    #[test]
+    fn rejects_non_allowed_creator() {
+        let mut task = task("withdraw3", json!({ "amount": "1" }));
+        task.creator = "0x00000000000000000000000000000000000000ff".to_string();
+
+        let decision = evaluate(&config(), &templates(), &sub_accounts(), &task);
+
+        assert_eq!(decision.outcome, PolicyOutcome::Reject);
+        assert_eq!(decision.rule, "creator");
+    }
+
+    #[test]
+    fn rejects_non_allowed_leader() {
+        let mut task = task("withdraw3", json!({ "amount": "1" }));
+        task.leader = "0x00000000000000000000000000000000000000ff".to_string();
+
+        let decision = evaluate(&config(), &templates(), &sub_accounts(), &task);
+
+        assert_eq!(decision.outcome, PolicyOutcome::Reject);
+        assert_eq!(decision.rule, "leader");
+    }
+
+    #[test]
+    fn applies_template_destination_allowlist() {
+        let mut config = config();
+        config.template_input_policies = template_policy(
+            "withdraw3",
+            "inputs.destination",
+            InputPolicyRule::AddressAllowList(vec![
+                "0x00000000000000000000000000000000000000aa".to_string()
+            ]),
+        );
+
+        let rejected = evaluate(
+            &config,
+            &templates(),
+            &sub_accounts(),
+            &task(
+                "withdraw3",
+                json!({
+                    "destination": "0x00000000000000000000000000000000000000bb",
+                    "amount": "1"
+                }),
+            ),
+        );
+        let allowed = evaluate(
+            &config,
+            &templates(),
+            &sub_accounts(),
+            &task(
+                "withdraw3",
+                json!({
+                    "destination": "0x00000000000000000000000000000000000000aa",
+                    "amount": "1"
+                }),
+            ),
+        );
+
+        assert_eq!(rejected.outcome, PolicyOutcome::Reject);
+        assert_eq!(rejected.rule, "template_input_policy");
+        assert_eq!(allowed.outcome, PolicyOutcome::Allow);
+    }
+
+    #[test]
+    fn applies_template_amount_max_before_withdraw_limit_fallback() {
+        let mut config = config();
+        config.withdraw_limit = Decimal::new(1000, 0);
+        config.template_input_policies = template_policy(
+            "withdraw3",
+            "inputs.amount",
+            InputPolicyRule::DecimalMax(Decimal::new(10, 0)),
+        );
+
+        let rejected = evaluate(
+            &config,
+            &templates(),
+            &sub_accounts(),
+            &task("withdraw3", json!({ "amount": "10.01" })),
+        );
+        let allowed = evaluate(
+            &config,
+            &templates(),
+            &sub_accounts(),
+            &task("withdraw3", json!({ "amount": "10" })),
+        );
+
+        assert_eq!(rejected.outcome, PolicyOutcome::Reject);
+        assert_eq!(rejected.rule, "template_input_policy");
+        assert_eq!(allowed.outcome, PolicyOutcome::Allow);
     }
 
     #[test]
@@ -517,5 +713,17 @@ mod tests {
                 "send_asset".to_string()
             ]
         );
+    }
+
+    fn template_policy(
+        template_id: &str,
+        path: &str,
+        rule: InputPolicyRule,
+    ) -> crate::config::TemplateInputPolicies {
+        let mut rules = std::collections::BTreeMap::new();
+        rules.insert(path.to_string(), rule);
+        let mut policies = crate::config::TemplateInputPolicies::new();
+        policies.insert(template_id.to_string(), rules);
+        policies
     }
 }

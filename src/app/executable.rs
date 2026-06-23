@@ -3,9 +3,8 @@ use tracing::info;
 
 use super::mode::RunMode;
 use super::runner::Runner;
-use super::signing_intent::{
-    build_and_validate_task_intent, validate_outer_signing_payload_digest,
-};
+use super::signing_intent::{build_and_validate_outer_submission, build_and_validate_task_intent};
+use crate::config::normalize_address;
 use crate::gateway::{TaskResultRequest, TaskView, TodoType};
 use crate::hyperliquid::classify_exchange_response;
 use crate::policy::evaluate;
@@ -60,6 +59,10 @@ impl Runner {
                 self.write_local_only_result(&task, &policy_rule).await?;
                 continue;
             }
+            if let Err(err) = self.ensure_current_signer_is_task_leader(&task) {
+                self.state.record_failed(&task, &err).await?;
+                return Err(NodeError::Signer(err));
+            }
 
             let outer = match self.gateway.outer_signing_payload(&task.id).await {
                 Ok(outer) => outer,
@@ -68,14 +71,28 @@ impl Runner {
                     return Err(err);
                 }
             };
-            if let Err(err) = validate_outer_signing_payload_digest(
-                &outer.typed_data,
-                outer.outer_signing_digest.as_deref(),
+            let multisig_info = match self.hl.multisig_info(&task.multisig_address).await {
+                Ok(info) => info,
+                Err(err) if err.retryable() => return Err(err),
+                Err(err) => {
+                    self.state.record_failed(&task, &err.to_string()).await?;
+                    return Err(err);
+                }
+            };
+            let verified = match build_and_validate_outer_submission(
+                &task,
+                self.templates.by_task(&task),
+                &outer,
+                &multisig_info.authorized_users,
+                multisig_info.threshold,
             ) {
-                self.state.record_failed(&task, &err).await?;
-                return Err(NodeError::Signer(err));
-            }
-            let signature = match self.signer.sign_and_verify_typed_data(&outer.typed_data) {
+                Ok(verified) => verified,
+                Err(err) => {
+                    self.state.record_failed(&task, &err).await?;
+                    return Err(NodeError::Signer(err));
+                }
+            };
+            let signature = match self.signer.sign_and_verify_typed_data(&verified.typed_data) {
                 Ok(signature) => signature,
                 Err(err) => {
                     self.state.record_failed(&task, &err.to_string()).await?;
@@ -90,10 +107,10 @@ impl Runner {
             let hl_response = match self
                 .hl
                 .submit(
-                    &outer.multi_sig_action,
+                    &verified.multi_sig_action,
                     task.nonce,
                     &signature,
-                    outer.vault_address.as_deref(),
+                    verified.vault_address.as_deref(),
                 )
                 .await
             {
@@ -154,5 +171,20 @@ impl Runner {
 
     async fn already_submitted_exchange(&self, task: &TaskView) -> Result<bool> {
         self.state.has_submitted_exchange(&task.id).await
+    }
+
+    fn ensure_current_signer_is_task_leader(
+        &self,
+        task: &TaskView,
+    ) -> std::result::Result<(), String> {
+        let task_leader = normalize_address(&task.leader).map_err(|err| err.to_string())?;
+        if task_leader != self.signer.address_lc() {
+            return Err(format!(
+                "task leader {} does not match local signer {}",
+                task.leader,
+                self.signer.address_lc()
+            ));
+        }
+        Ok(())
     }
 }

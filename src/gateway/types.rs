@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::config::normalize_address;
+use crate::config::{normalize_address, InputPolicyRule, TemplateInputPolicies};
 use crate::{NodeError, Result};
 
 #[derive(Debug, Deserialize)]
@@ -263,6 +263,23 @@ impl TemplateRegistry {
         Ok(())
     }
 
+    pub(crate) fn validate_template_input_policies(
+        &self,
+        policies: &TemplateInputPolicies,
+    ) -> Result<()> {
+        for (template_id, rules) in policies {
+            let template = self.by_id(template_id).ok_or_else(|| {
+                NodeError::Config(format!(
+                    "template input policy references unknown template `{template_id}`"
+                ))
+            })?;
+            for (path, rule) in rules {
+                template.validate_input_policy(path, rule)?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn by_task(&self, task: &TaskView) -> Option<&TemplateView> {
         self.templates
             .iter()
@@ -286,6 +303,36 @@ impl TemplateView {
 
     pub(crate) fn requires_hyperliquid_submit(&self) -> bool {
         self.hl_action_type.is_some()
+    }
+
+    fn validate_input_policy(&self, path: &str, rule: &InputPolicyRule) -> Result<()> {
+        let Some(field_name) = path.strip_prefix("inputs.") else {
+            return Err(NodeError::Config(format!(
+                "template input policy path `{path}` must start with `inputs.`"
+            )));
+        };
+        let field = self
+            .fields
+            .iter()
+            .find(|field| field.name == field_name)
+            .ok_or_else(|| {
+                NodeError::Config(format!(
+                    "template input policy references unknown field `{}` on template `{}`",
+                    field_name, self.id
+                ))
+            })?;
+        match (rule, field.field_type) {
+            (InputPolicyRule::DecimalMax(_), TemplateFieldType::Amount)
+            | (InputPolicyRule::AddressAllowList(_), TemplateFieldType::Address) => Ok(()),
+            (InputPolicyRule::DecimalMax(_), _) => Err(NodeError::Config(format!(
+                "template input policy `{}` on template `{}` must reference an amount field",
+                path, self.id
+            ))),
+            (InputPolicyRule::AddressAllowList(_), _) => Err(NodeError::Config(format!(
+                "template input policy `{}` on template `{}` must reference an address field",
+                path, self.id
+            ))),
+        }
     }
 
     pub(crate) fn signing_intent_spec(

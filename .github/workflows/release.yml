@@ -73,19 +73,12 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          staging="${RUNNER_TEMP}/${ASSET_NAME}"
-          mkdir -p "$staging/config"
-
-          cp target/release/safe-node "$staging/safe-node"
-          cp README.md README.zh-CN.md "$staging/"
-          cp config/example.node.json "$staging/config/example.node.json"
-          chmod +x "$staging/safe-node"
-
           mkdir -p dist
-          tar -C "$RUNNER_TEMP" -czf "dist/${ASSET_NAME}.tar.gz" "$ASSET_NAME"
+          cp target/release/safe-node "dist/${ASSET_NAME}"
+          chmod +x "dist/${ASSET_NAME}"
           (
             cd dist
-            sha256sum "${ASSET_NAME}.tar.gz" > "${ASSET_NAME}.tar.gz.sha256"
+            sha256sum "${ASSET_NAME}" > "${ASSET_NAME}.sha256"
           )
 
       - name: Create GitHub release
@@ -93,7 +86,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$RELEASE_TAG" \
-            "dist/${ASSET_NAME}.tar.gz" \
-            "dist/${ASSET_NAME}.tar.gz.sha256" \
+            "dist/${ASSET_NAME}" \
+            "dist/${ASSET_NAME}.sha256" \
             --title "safe-node ${RELEASE_TAG}" \
             --generate-notes

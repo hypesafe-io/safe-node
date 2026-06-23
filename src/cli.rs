@@ -23,14 +23,14 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct RunArgs {
-    /// Config file path. Defaults to config/node.json.
+    /// JSON5 config file path. Defaults to config/node.json.
     #[arg(long)]
     pub config: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
 pub struct OnceArgs {
-    /// Config file path. Defaults to config/node.json.
+    /// JSON5 config file path. Defaults to config/node.json.
     #[arg(long)]
     pub config: Option<PathBuf>,
     /// Evaluate without signing, submitting signatures, or submitting to HL.

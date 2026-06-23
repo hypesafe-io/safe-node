@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use hypesafe_signing_intent::{Network, TaskContext, TemplateSpec};
 use rust_decimal::Decimal;
 use serde_json::{json, Value};
 
@@ -91,10 +92,13 @@ async fn leader_submits_executable_to_hl() {
         vec![task_for_leader("exec-1", "executable", signer.address_lc())],
     ))
     .await;
-    let hl = TestHl::spawn(json!({
-        "status": "ok",
-        "response": { "data": { "statuses": [{ "resting": { "oid": 1 } }] } }
-    }))
+    let hl = TestHl::spawn_for_signer(
+        &signer,
+        json!({
+            "status": "ok",
+            "response": { "data": { "statuses": [{ "resting": { "oid": 1 } }] } }
+        }),
+    )
     .await;
     let mut runner = test_runner(
         signer,
@@ -108,6 +112,7 @@ async fn leader_submits_executable_to_hl() {
     runner.process_cycle().await.unwrap();
 
     assert_eq!(gateway.outer_payload_count(), 1);
+    assert_eq!(hl.info_count(), 1);
     assert_eq!(hl.exchange_count(), 1);
     assert_eq!(gateway.result_count(), 1);
     assert_eq!(gateway.last_result_success(), Some(true));
@@ -123,7 +128,7 @@ async fn digest_mismatch_leader_does_not_submit_hl() {
     );
     gateway_state.outer_signing_digest = bad_digest();
     let gateway = TestGateway::spawn(gateway_state).await;
-    let hl = TestHl::spawn(json!({"status": "ok"})).await;
+    let hl = TestHl::spawn_for_signer(&signer, json!({"status": "ok"})).await;
     let mut runner = test_runner(
         signer,
         gateway.url(),
@@ -142,6 +147,154 @@ async fn digest_mismatch_leader_does_not_submit_hl() {
 }
 
 #[tokio::test]
+async fn tampered_multi_sig_action_does_not_submit_hl() {
+    let signer = NodeSigner::random_for_test();
+    let mut gateway_state = gateway_state(
+        &signer,
+        vec![],
+        vec![task_for_leader("exec-1", "executable", signer.address_lc())],
+    );
+    gateway_state.multi_sig_action["payload"]["action"]["amount"] = json!("2");
+    let gateway = TestGateway::spawn(gateway_state).await;
+    let hl = TestHl::spawn_for_signer(&signer, json!({"status": "ok"})).await;
+    let mut runner = test_runner(
+        signer,
+        gateway.url(),
+        hl.url(),
+        RunMode::LeaderExecutor,
+        false,
+    )
+    .await;
+
+    let err = runner.process_cycle().await.unwrap_err();
+
+    assert!(err.to_string().contains("multiSigAction does not match"));
+    assert_eq!(gateway.outer_payload_count(), 1);
+    assert_eq!(hl.exchange_count(), 0);
+    assert_eq!(gateway.result_count(), 0);
+}
+
+#[tokio::test]
+async fn insufficient_inner_signatures_do_not_submit_hl() {
+    let signer = NodeSigner::random_for_test();
+    let gateway = TestGateway::spawn(gateway_state(
+        &signer,
+        vec![],
+        vec![task_for_leader("exec-1", "executable", signer.address_lc())],
+    ))
+    .await;
+    let hl = TestHl::spawn_status_with_authorized(
+        vec![
+            signer.address_lc().to_string(),
+            "0x00000000000000000000000000000000000000aa".to_string(),
+        ],
+        2,
+        StatusCode::OK,
+        json!({"status": "ok"}),
+    )
+    .await;
+    let mut runner = test_runner(
+        signer,
+        gateway.url(),
+        hl.url(),
+        RunMode::LeaderExecutor,
+        false,
+    )
+    .await;
+
+    let err = runner.process_cycle().await.unwrap_err();
+
+    assert!(err.to_string().contains("below threshold"));
+    assert_eq!(hl.exchange_count(), 0);
+}
+
+#[tokio::test]
+async fn unauthorized_inner_signature_does_not_submit_hl() {
+    let signer = NodeSigner::random_for_test();
+    let gateway = TestGateway::spawn(gateway_state(
+        &signer,
+        vec![],
+        vec![task_for_leader("exec-1", "executable", signer.address_lc())],
+    ))
+    .await;
+    let hl = TestHl::spawn_status_with_authorized(
+        vec!["0x00000000000000000000000000000000000000aa".to_string()],
+        1,
+        StatusCode::OK,
+        json!({"status": "ok"}),
+    )
+    .await;
+    let mut runner = test_runner(
+        signer,
+        gateway.url(),
+        hl.url(),
+        RunMode::LeaderExecutor,
+        false,
+    )
+    .await;
+
+    let err = runner.process_cycle().await.unwrap_err();
+
+    assert!(err.to_string().contains("unauthorized signer"));
+    assert_eq!(hl.exchange_count(), 0);
+}
+
+#[tokio::test]
+async fn duplicate_inner_signature_does_not_submit_hl() {
+    let signer = NodeSigner::random_for_test();
+    let mut gateway_state = gateway_state(
+        &signer,
+        vec![],
+        vec![task_for_leader("exec-1", "executable", signer.address_lc())],
+    );
+    let signature = gateway_state.multi_sig_action["signatures"][0].clone();
+    gateway_state.multi_sig_action["signatures"] = json!([signature.clone(), signature]);
+    let gateway = TestGateway::spawn(gateway_state).await;
+    let hl = TestHl::spawn_for_signer(&signer, json!({"status": "ok"})).await;
+    let mut runner = test_runner(
+        signer,
+        gateway.url(),
+        hl.url(),
+        RunMode::LeaderExecutor,
+        false,
+    )
+    .await;
+
+    let err = runner.process_cycle().await.unwrap_err();
+
+    assert!(err.to_string().contains("duplicate inner signature signer"));
+    assert_eq!(hl.exchange_count(), 0);
+}
+
+#[tokio::test]
+async fn whitelisted_nonlocal_leader_does_not_execute() {
+    let signer = NodeSigner::random_for_test();
+    let gateway = TestGateway::spawn(gateway_state(
+        &signer,
+        vec![],
+        vec![task_for_leader("exec-1", "executable", OTHER)],
+    ))
+    .await;
+    let hl = TestHl::spawn_for_signer(&signer, json!({"status": "ok"})).await;
+    let mut runner = test_runner(
+        signer,
+        gateway.url(),
+        hl.url(),
+        RunMode::LeaderExecutor,
+        false,
+    )
+    .await;
+    runner.config.allowed_leaders.push(OTHER.to_string());
+    runner.templates = TemplateRegistry::new(vec![template("withdraw3")]);
+
+    let err = runner.process_cycle().await.unwrap_err();
+
+    assert!(err.to_string().contains("does not match local signer"));
+    assert_eq!(gateway.outer_payload_count(), 0);
+    assert_eq!(hl.exchange_count(), 0);
+}
+
+#[tokio::test]
 async fn hl_status_error_writes_gateway_failure() {
     let signer = NodeSigner::random_for_test();
     let gateway = TestGateway::spawn(gateway_state(
@@ -150,10 +303,13 @@ async fn hl_status_error_writes_gateway_failure() {
         vec![task_for_leader("exec-1", "executable", signer.address_lc())],
     ))
     .await;
-    let hl = TestHl::spawn(json!({
-        "status": "ok",
-        "response": { "data": { "statuses": [{ "error": "Insufficient margin" }] } }
-    }))
+    let hl = TestHl::spawn_for_signer(
+        &signer,
+        json!({
+            "status": "ok",
+            "response": { "data": { "statuses": [{ "error": "Insufficient margin" }] } }
+        }),
+    )
     .await;
     let mut runner = test_runner(
         signer,
@@ -184,10 +340,13 @@ async fn hl_top_level_error_writes_gateway_failure() {
         vec![task_for_leader("exec-1", "executable", signer.address_lc())],
     ))
     .await;
-    let hl = TestHl::spawn(json!({
-        "status": "err",
-        "response": { "error": "bad signature" }
-    }))
+    let hl = TestHl::spawn_for_signer(
+        &signer,
+        json!({
+            "status": "err",
+            "response": { "error": "bad signature" }
+        }),
+    )
     .await;
     let mut runner = test_runner(
         signer,
@@ -250,7 +409,12 @@ async fn does_not_resubmit_hl_after_submit_error() {
         vec![task_for_leader("exec-1", "executable", signer.address_lc())],
     ))
     .await;
-    let hl = TestHl::spawn_status(StatusCode::BAD_GATEWAY, json!({"error": "upstream"})).await;
+    let hl = TestHl::spawn_status_for_signer(
+        &signer,
+        StatusCode::BAD_GATEWAY,
+        json!({"error": "upstream"}),
+    )
+    .await;
     let mut runner = test_runner(
         signer,
         gateway.url(),
@@ -280,9 +444,9 @@ async fn submit_before_hl_failure_records_failed_without_hl_call() {
         vec![],
         vec![task_for_leader("exec-1", "executable", signer.address_lc())],
     );
-    gateway_state.signing_payload = json!({});
+    gateway_state.outer_typed_data = json!({});
     let gateway = TestGateway::spawn(gateway_state).await;
-    let hl = TestHl::spawn(json!({"status": "ok"})).await;
+    let hl = TestHl::spawn_for_signer(&signer, json!({"status": "ok"})).await;
     let mut runner = test_runner(
         signer,
         gateway.url(),
@@ -293,7 +457,7 @@ async fn submit_before_hl_failure_records_failed_without_hl_call() {
     .await;
 
     let err = runner.process_cycle().await.unwrap_err();
-    assert!(err.to_string().contains("invalid typed-data"));
+    assert!(err.to_string().contains("outer typedData does not match"));
     let recent = runner.state.recent(1).await.unwrap();
 
     assert_eq!(hl.exchange_count(), 0);
@@ -322,7 +486,10 @@ async fn non_leader_does_not_submit_hl() {
 
 #[test]
 fn starts_as_cosigner_when_signer_is_not_leader() {
-    assert_eq!(mode_for_signer(OTHER, MULTISIG), RunMode::CoSigner);
+    assert_eq!(
+        mode_for_signer(OTHER, &[MULTISIG.to_string()]),
+        RunMode::CoSigner
+    );
 }
 
 #[tokio::test]
@@ -478,7 +645,9 @@ async fn test_runner(
         poll_interval_secs: 15,
         dry_run,
         allowed_templates: vec!["withdraw3".to_string()],
-        allowed_creators: vec![OTHER.to_string()],
+        allowed_creators: vec![OTHER.to_string(), signer.address_lc().to_string()],
+        allowed_leaders: vec![leader.clone()],
+        template_input_policies: Default::default(),
         state_db: "sqlite::memory:".to_string(),
         debug_http_addr: "127.0.0.1:9909".parse().unwrap(),
         signer: SignerConfig {
@@ -503,6 +672,12 @@ async fn test_runner(
         consecutive_gateway_failures: 0,
     });
 
+    let templates = if mode == RunMode::LeaderExecutor {
+        TemplateRegistry::new(vec![template_with_intent("withdraw3")])
+    } else {
+        TemplateRegistry::new(vec![template("withdraw3")])
+    };
+
     Runner {
         config,
         signer,
@@ -511,7 +686,7 @@ async fn test_runner(
         state: StateStore::connect("sqlite::memory:").await.unwrap(),
         mode,
         debug,
-        templates: TemplateRegistry::new(vec![template("withdraw3")]),
+        templates,
         sub_accounts: SubAccountRegistry::default(),
         consecutive_gateway_failures: 0,
         last_template_refresh_at: Some(crate::state::now_secs()),
@@ -540,7 +715,7 @@ fn task_with_template_and_inputs(
     TaskView {
         id: id.to_string(),
         multisig_address: MULTISIG.to_string(),
-        creator: OTHER.to_string(),
+        creator: leader.to_string(),
         leader: leader.to_string(),
         nonce: 1,
         network: "mainnet".to_string(),
@@ -583,6 +758,48 @@ fn template(id: &str) -> TemplateView {
     }
 }
 
+fn template_with_intent(id: &str) -> TemplateView {
+    TemplateView {
+        id: id.to_string(),
+        version: 1,
+        type_name: "withdraw".to_string(),
+        hl_action_type: Some("withdraw3".to_string()),
+        display_name: text("Withdraw"),
+        description: text("Withdraw"),
+        summary: text("Withdraw"),
+        fields: vec![TemplateField {
+            name: "amount".to_string(),
+            field_type: TemplateFieldType::Amount,
+            required: true,
+            label: text("Amount"),
+            description: text("Amount"),
+        }],
+        signing: Some(json!({
+            "domain": {
+                "name": "HypeSafe",
+                "version": "1",
+                "chainId": 42161,
+                "verifyingContract": "ctx:multiSigAddress"
+            },
+            "primaryType": "Ping",
+            "types": [
+                { "name": "leader", "type": "address" },
+                { "name": "amount", "type": "string" }
+            ],
+            "message": [
+                { "name": "leader", "from": "ctx:leader" },
+                { "name": "amount", "from": "param:amount" }
+            ]
+        })),
+        exchange: Some(json!({
+            "action": [
+                { "key": "type", "from": "const:withdraw3" },
+                { "key": "amount", "from": "param:amount" }
+            ]
+        })),
+    }
+}
+
 fn local_template(id: &str) -> TemplateView {
     TemplateView {
         id: id.to_string(),
@@ -605,26 +822,37 @@ fn text(value: &str) -> I18nText {
     }
 }
 
-fn typed_data(signer: &NodeSigner) -> Value {
-    json!({
-        "domain": {
-            "name": "HypeSafe",
-            "version": "1",
-            "chainId": 42161,
-            "verifyingContract": "0x0000000000000000000000000000000000000001"
-        },
-        "primaryType": "Ping",
-        "types": {
-            "Ping": [
-                { "name": "sender", "type": "address" },
-                { "name": "nonce", "type": "uint64" }
-            ]
-        },
-        "message": {
-            "sender": signer.address_lc(),
-            "nonce": 1
-        }
-    })
+fn executable_payloads(signer: &NodeSigner) -> (Value, String, String, Value, Value) {
+    let template = template_with_intent("withdraw3");
+    let template_spec = TemplateSpec::new(
+        template.id,
+        template.version,
+        template.signing.unwrap(),
+        template.exchange.unwrap(),
+    );
+    let inputs = json!({ "amount": "1" });
+    let ctx = TaskContext {
+        multisig_address: MULTISIG,
+        leader: signer.address_lc(),
+        nonce: 1,
+        network: Network::Mainnet,
+        template: &template_spec,
+        params: &inputs,
+    };
+    let signing_payload = hypesafe_signing_intent::build_signing_payload(&ctx).unwrap();
+    let signing_digest = typed_data_digest_hex(&signing_payload).unwrap();
+    let inner_signature = signer.sign_and_verify_typed_data(&signing_payload).unwrap();
+    let multi_sig_action =
+        hypesafe_signing_intent::build_multi_sig_action(&ctx, &[inner_signature.clone()]).unwrap();
+    let outer_typed_data =
+        hypesafe_signing_intent::build_outer_signing_payload(&ctx, &multi_sig_action).unwrap();
+    (
+        signing_payload,
+        signing_digest,
+        inner_signature,
+        multi_sig_action,
+        outer_typed_data,
+    )
 }
 
 fn bad_digest() -> String {
@@ -634,9 +862,13 @@ fn bad_digest() -> String {
 #[derive(Clone)]
 struct GatewayState {
     signer: String,
+    inner_signature: String,
     signing_payload: Value,
     signing_digest: String,
+    outer_typed_data: Value,
     outer_signing_digest: String,
+    multi_sig_action: Value,
+    vault_address: Option<String>,
     templates: Arc<Mutex<Vec<TemplateView>>>,
     sign_tasks: Arc<Mutex<Vec<TaskView>>>,
     execute_tasks: Arc<Mutex<Vec<TaskView>>>,
@@ -657,14 +889,19 @@ fn gateway_state(
     sign_tasks: Vec<TaskView>,
     execute_tasks: Vec<TaskView>,
 ) -> GatewayState {
-    let signing_payload = typed_data(signer);
-    let signing_digest = typed_data_digest_hex(&signing_payload).expect("typed-data digest");
+    let (signing_payload, signing_digest, inner_signature, multi_sig_action, outer_typed_data) =
+        executable_payloads(signer);
+    let outer_signing_digest = typed_data_digest_hex(&outer_typed_data).expect("outer digest");
     GatewayState {
         signer: signer.address_lc().to_string(),
+        inner_signature,
         signing_payload,
-        signing_digest: signing_digest.clone(),
-        outer_signing_digest: signing_digest,
-        templates: Arc::new(Mutex::new(vec![template("withdraw3")])),
+        signing_digest,
+        outer_typed_data,
+        outer_signing_digest,
+        multi_sig_action,
+        vault_address: None,
+        templates: Arc::new(Mutex::new(vec![template_with_intent("withdraw3")])),
         sign_tasks: Arc::new(Mutex::new(sign_tasks)),
         execute_tasks: Arc::new(Mutex::new(execute_tasks)),
         template_bad_gateway_failures: Arc::new(AtomicUsize::new(0)),
@@ -796,14 +1033,14 @@ async fn task_inbox(
             state.sign_inbox_count.fetch_add(1, Ordering::SeqCst);
             envelope(json!(tasks_with_digest(
                 &state.sign_tasks.lock().unwrap(),
-                &state.signing_digest,
+                &state,
             )))
         }
         Some("execute") => {
             state.execute_inbox_count.fetch_add(1, Ordering::SeqCst);
             envelope(json!(tasks_with_digest(
                 &state.execute_tasks.lock().unwrap(),
-                &state.signing_digest,
+                &state,
             )))
         }
         _ => envelope(json!([])),
@@ -856,10 +1093,10 @@ async fn outer_payload(
 ) -> Response {
     state.outer_payload_count.fetch_add(1, Ordering::SeqCst);
     envelope(json!({
-        "typedData": state.signing_payload,
+        "typedData": state.outer_typed_data,
         "outerSigningDigest": state.outer_signing_digest,
-        "multiSigAction": { "type": "withdraw3" },
-        "vaultAddress": null
+        "multiSigAction": state.multi_sig_action,
+        "vaultAddress": state.vault_address
     }))
 }
 
@@ -900,13 +1137,17 @@ fn task_view_response(state: &GatewayState, task_id: &str, status: &str) -> Valu
     })
 }
 
-fn tasks_with_digest(tasks: &[TaskView], digest: &str) -> Vec<TaskView> {
+fn tasks_with_digest(tasks: &[TaskView], state: &GatewayState) -> Vec<TaskView> {
     tasks
         .iter()
         .cloned()
         .map(|mut task| {
             if task.signing_digest.is_none() {
-                task.signing_digest = Some(digest.to_string());
+                task.signing_digest = Some(state.signing_digest.clone());
+            }
+            if task.creator.eq_ignore_ascii_case(&state.signer) && task.creator_signature.is_none()
+            {
+                task.creator_signature = Some(state.inner_signature.clone());
             }
             task
         })
@@ -934,7 +1175,10 @@ fn consume_failure(counter: &AtomicUsize) -> bool {
 struct HlState {
     response: Value,
     status: StatusCode,
+    authorized_users: Vec<String>,
+    threshold: i64,
     exchange_count: Arc<AtomicUsize>,
+    info_count: Arc<AtomicUsize>,
 }
 
 struct TestHl {
@@ -948,12 +1192,43 @@ impl TestHl {
     }
 
     async fn spawn_status(status: StatusCode, response: Value) -> Self {
+        Self::spawn_status_with_authorized(Vec::new(), 1, status, response).await
+    }
+
+    async fn spawn_for_signer(signer: &NodeSigner, response: Value) -> Self {
+        Self::spawn_status_for_signer(signer, StatusCode::OK, response).await
+    }
+
+    async fn spawn_status_for_signer(
+        signer: &NodeSigner,
+        status: StatusCode,
+        response: Value,
+    ) -> Self {
+        Self::spawn_status_with_authorized(
+            vec![signer.address_lc().to_string()],
+            1,
+            status,
+            response,
+        )
+        .await
+    }
+
+    async fn spawn_status_with_authorized(
+        authorized_users: Vec<String>,
+        threshold: i64,
+        status: StatusCode,
+        response: Value,
+    ) -> Self {
         let state = HlState {
             response,
             status,
+            authorized_users,
+            threshold,
             exchange_count: Arc::new(AtomicUsize::new(0)),
+            info_count: Arc::new(AtomicUsize::new(0)),
         };
         let app = Router::new()
+            .route("/info", post(info))
             .route("/exchange", post(exchange))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -974,6 +1249,19 @@ impl TestHl {
     fn exchange_count(&self) -> usize {
         self.state.exchange_count.load(Ordering::SeqCst)
     }
+
+    fn info_count(&self) -> usize {
+        self.state.info_count.load(Ordering::SeqCst)
+    }
+}
+
+async fn info(State(state): State<HlState>, Json(_body): Json<Value>) -> Response {
+    state.info_count.fetch_add(1, Ordering::SeqCst);
+    Json(json!({
+        "authorizedUsers": state.authorized_users,
+        "threshold": state.threshold
+    }))
+    .into_response()
 }
 
 async fn exchange(State(state): State<HlState>, Json(_body): Json<Value>) -> Response {

@@ -75,11 +75,12 @@ impl Runner {
             std::path::Path::new(&config.signer.keystore_path),
             config.signer.password_env.as_deref(),
         )?;
-        let mode = mode_for_signer(signer.address_lc(), &config.leader);
+        let mode = mode_for_signer(signer.address_lc(), &config.allowed_leaders);
         let state = StateStore::connect(&config.state_db).await?;
         let mut gateway = GatewayClient::new(config.gateway_url.clone());
         let templates = TemplateRegistry::new(gateway.templates().await?);
         templates.validate_allowed_templates(&config.allowed_templates)?;
+        templates.validate_template_input_policies(&config.template_input_policies)?;
         authenticate_gateway(&mut gateway, &signer, &config).await?;
         let sub_accounts = fetch_sub_accounts_if_needed(&mut gateway, &config).await?;
         log_send_asset_sub_account_snapshot(&config, &sub_accounts);
@@ -180,10 +181,22 @@ impl Runner {
             Ok(templates) => {
                 let refreshed = TemplateRegistry::new(templates);
                 match refreshed.validate_allowed_templates(&self.config.allowed_templates) {
-                    Ok(()) => {
-                        self.templates = refreshed;
-                        self.last_template_refresh_at = Some(now);
-                    }
+                    Ok(()) => match refreshed
+                        .validate_template_input_policies(&self.config.template_input_policies)
+                    {
+                        Ok(()) => {
+                            self.templates = refreshed;
+                            self.last_template_refresh_at = Some(now);
+                        }
+                        Err(err) => {
+                            self.last_template_refresh_at = Some(now);
+                            warn!(
+                                error = %err,
+                                "template refresh conflicted with configured input policies; \
+                                 keeping previous registry"
+                            );
+                        }
+                    },
                     Err(err) => {
                         self.last_template_refresh_at = Some(now);
                         warn!(
@@ -334,8 +347,8 @@ fn gateway_session_renewal_required(err: &NodeError) -> bool {
     matches!(err, NodeError::SessionRenewalRequired)
 }
 
-pub(super) fn mode_for_signer(signer_lc: &str, leader_lc: &str) -> RunMode {
-    if signer_lc == leader_lc {
+pub(super) fn mode_for_signer(signer_lc: &str, allowed_leaders: &[String]) -> RunMode {
+    if allowed_leaders.iter().any(|leader| leader == signer_lc) {
         RunMode::LeaderExecutor
     } else {
         RunMode::CoSigner

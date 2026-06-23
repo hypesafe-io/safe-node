@@ -1,4 +1,5 @@
-use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::retry::sleep_backoff;
@@ -42,6 +43,19 @@ struct ExchangeRequest<'a> {
     vault_address: Option<&'a str>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct MultiSigInfo {
+    pub(crate) authorized_users: Vec<String>,
+    pub(crate) threshold: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UserToMultiSigSigners {
+    authorized_users: Vec<String>,
+    threshold: i64,
+}
+
 pub struct HlExchangeClient {
     base_url: String,
     client: reqwest::Client,
@@ -53,6 +67,22 @@ impl HlExchangeClient {
             base_url: base_url.into(),
             client: reqwest::Client::new(),
         }
+    }
+
+    pub async fn multisig_info(&self, address: &str) -> Result<MultiSigInfo> {
+        let body = serde_json::json!({ "type": "userToMultiSigSigners", "user": address });
+        let parsed: Option<UserToMultiSigSigners> = self
+            .post_info("hyperliquid.info.user_to_multi_sig_signers", body)
+            .await?;
+        let Some(parsed) = parsed else {
+            return Err(NodeError::Hyperliquid(format!(
+                "{address} is not a multisig account on Hyperliquid"
+            )));
+        };
+        Ok(MultiSigInfo {
+            authorized_users: parsed.authorized_users,
+            threshold: parsed.threshold,
+        })
     }
 
     pub async fn submit(
@@ -103,6 +133,43 @@ impl HlExchangeClient {
             }
         }
         Err(last_err.unwrap_or_else(|| NodeError::Hyperliquid("exchange failed".to_string())))
+    }
+
+    async fn post_info<T: DeserializeOwned>(&self, operation: &str, body: Value) -> Result<T> {
+        let url = format!("{}/info", self.base_url);
+        let mut last_err = None;
+        for attempt in 0..=3 {
+            match self.client.post(&url).json(&body).send().await {
+                Ok(response) => {
+                    let status = response.status();
+                    let context = HttpErrorContext::for_request(operation, "POST", "/info")
+                        .with_response_headers(response.headers());
+                    let body = response.text().await?;
+                    if !status.is_success() {
+                        let err = NodeError::HttpStatus {
+                            status: status.as_u16(),
+                            body,
+                            context,
+                        };
+                        if err.retryable() && attempt < 3 {
+                            last_err = Some(err);
+                            sleep_backoff(attempt).await;
+                            continue;
+                        }
+                        return Err(err);
+                    }
+                    return serde_json::from_str(&body).map_err(|err| {
+                        NodeError::Hyperliquid(format!("invalid info response: {err}"))
+                    });
+                }
+                Err(err) if attempt < 3 => {
+                    last_err = Some(NodeError::Reqwest(err));
+                    sleep_backoff(attempt).await;
+                }
+                Err(err) => return Err(NodeError::Reqwest(err)),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| NodeError::Hyperliquid("info request failed".to_string())))
     }
 }
 
