@@ -6,7 +6,9 @@ use tracing::warn;
 use super::handlers::router;
 use super::snapshot::DebugSnapshot;
 use super::types::DebugAppState;
-use crate::config::RedactedConfig;
+use crate::config::{Config, RedactedConfig};
+use crate::gateway::{GatewayClient, SubAccountRegistry, TemplateRegistry};
+use crate::signing::NodeSigner;
 use crate::state::StateStore;
 use crate::{NodeError, Result};
 
@@ -15,11 +17,16 @@ pub(crate) fn spawn(
     snapshot: DebugSnapshot,
     state: StateStore,
     config: RedactedConfig,
+    task_config: Config,
+    signer: NodeSigner,
+    templates: TemplateRegistry,
+    sub_accounts: SubAccountRegistry,
+    gateway: GatewayClient,
 ) -> tokio::task::JoinHandle<Result<()>> {
-    if requires_remote_debug_warning(addr) {
+    if requires_remote_rpc_auth_warning(addr, config.rpc_auth_token_configured) {
         warn!(
-            debug_http_addr = %addr,
-            "debug HTTP is bound to a non-localhost address; v1 has no remote access authentication"
+            rpc_http_addr = %addr,
+            "RPC HTTP is bound to a non-localhost address without rpc_auth_token"
         );
     }
     tokio::spawn(async move {
@@ -28,32 +35,49 @@ pub(crate) fn spawn(
             snapshot,
             state,
             config,
+            task: Some(super::types::RpcTaskState::new(
+                task_config,
+                signer,
+                templates,
+                sub_accounts,
+                gateway,
+            )),
         });
         axum::serve(listener, app)
             .await
-            .map_err(|err| NodeError::Runtime(format!("debug HTTP server failed: {err}")))
+            .map_err(|err| NodeError::Runtime(format!("RPC HTTP server failed: {err}")))
     })
 }
 
-fn requires_remote_debug_warning(addr: SocketAddr) -> bool {
-    !addr.ip().is_loopback()
+fn requires_remote_rpc_auth_warning(addr: SocketAddr, auth_token_configured: bool) -> bool {
+    !auth_token_configured && !addr.ip().is_loopback()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::requires_remote_debug_warning;
+    use super::requires_remote_rpc_auth_warning;
 
     #[test]
-    fn loopback_debug_addr_does_not_require_remote_warning() {
-        assert!(!requires_remote_debug_warning(
-            "127.0.0.1:9909".parse().unwrap()
+    fn loopback_rpc_addr_does_not_require_remote_warning() {
+        assert!(!requires_remote_rpc_auth_warning(
+            "127.0.0.1:9909".parse().unwrap(),
+            false
         ));
     }
 
     #[test]
-    fn non_loopback_debug_addr_requires_remote_warning() {
-        assert!(requires_remote_debug_warning(
-            "0.0.0.0:9909".parse().unwrap()
+    fn non_loopback_rpc_addr_without_auth_requires_remote_warning() {
+        assert!(requires_remote_rpc_auth_warning(
+            "0.0.0.0:9909".parse().unwrap(),
+            false
+        ));
+    }
+
+    #[test]
+    fn non_loopback_rpc_addr_with_auth_does_not_require_remote_warning() {
+        assert!(!requires_remote_rpc_auth_warning(
+            "0.0.0.0:9909".parse().unwrap(),
+            true
         ));
     }
 }

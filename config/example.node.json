@@ -1,17 +1,8 @@
 {
-  // Gateway API base URL used to pull tasks and submit votes/results.
   "gateway_url": "https://api.hypesafe.io",
-
-  // Hyperliquid API base URL used for exchange submissions.
   "hl_api_url": "https://api.hyperliquid.xyz",
-
-  // Daemon polling interval in seconds.
   "poll_interval_secs": 3,
-
-  // When true, evaluate policy without signing, voting, or submitting to HL.
   "dry_run": false,
-
-  // Task template allowlist. task.template_id must be one of these values.
   "allowed_templates": [
     "approve_sub_account_api_agent",
     "convert_to_manual_account",
@@ -25,62 +16,36 @@
     "sub_account_transfer",
     "update_multisig",
     "sub_account_withdraw3",
-    "withdraw3",
+    "withdraw3"
   ],
-
-  // Task creator allowlist. If omitted, safe-node defaults this to [leader].
   "allowed_creators": [
-    "0x0000000000000000000000000000000000000001",
+    "0x0000000000000000000000000000000000000001"
   ],
-
-  // Task leader allowlist. Execute mode still requires task.leader == local signer.
   "allowed_leaders": [
-    "0x0000000000000000000000000000000000000001",
+    "0x0000000000000000000000000000000000000001"
   ],
-
-  // Per-template input policy. Paths currently support only inputs.<field>.
   "template_input_policies": {
     "withdraw3": {
-      // Destination address allowlist after address normalization.
       "inputs.destination": [
-        "0x0000000000000000000000000000000000000004",
+        "0x0000000000000000000000000000000000000004"
       ],
-
-      // Decimal maximum. The task amount must be <= this value.
-      "inputs.amount": "10",
+      "inputs.amount": "10"
     },
     "sub_account_withdraw3": {
-      // Destination address allowlist after address normalization.
       "inputs.destination": [
-        "0x0000000000000000000000000000000000000004",
+        "0x0000000000000000000000000000000000000004"
       ],
-
-      // Decimal maximum. The task amount must be <= this value.
-      "inputs.amount": "5",
-    },
+      "inputs.amount": "5"
+    }
   },
-
-  // Local SQLite connection URL for node state.
   "state_db": "sqlite:data/node.db",
-
-  // Debug HTTP listen address. Use 0.0.0.0:9909 only when exposing intentionally.
-  "debug_http_addr": "127.0.0.1:9909",
-
-  // Local encrypted signer keystore settings.
+  "rpc_http_addr": "127.0.0.1:9909",
+  "rpc_auth_token": "",
   "signer": {
-    // Path to the encrypted signer keystore file.
     "keystore_path": "config/signer.json",
-
-    // Optional environment variable that contains the keystore password.
-    "password_env": "SAFE_NODE_KEYSTORE_PASSWORD",
+    "password_env": "SAFE_NODE_KEYSTORE_PASSWORD"
   },
-
-  // Expected task leader. Also used as the default creator/leader allowlist value.
   "leader": "0x0000000000000000000000000000000000000001",
-
-  // Hyperliquid multisig account this node is allowed to serve.
   "multisig": "0x0000000000000000000000000000000000000002",
-
-  // Legacy amount limit fallback when no per-template amount policy exists.
-  "withdraw_limit": "10",
+  "withdraw_limit": "10"
 }

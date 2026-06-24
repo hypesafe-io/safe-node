@@ -3,9 +3,9 @@ use serde_json::{json, Value};
 
 use super::response::parse_response;
 use super::types::{
-    AccountView, OuterSigningPayload, SignInMessage, SigningPayload, SigningPayloadResponse,
-    SubAccountRegistry, SubAccountView, TaskResultRequest, TaskView, TemplateView, TodoType,
-    TokenResponse,
+    AccountView, CreateTaskPayloadRequest, CreateTaskPayloadResponse, OuterSigningPayload,
+    SignInMessage, SigningPayload, SigningPayloadResponse, SubAccountRegistry, SubAccountView,
+    TaskResultRequest, TaskView, TemplateView, TodoType, TokenResponse,
 };
 use crate::retry::sleep_backoff;
 use crate::signing::NodeSigner;
@@ -162,6 +162,46 @@ impl GatewayClient {
             &path,
             None,
             RetryPolicy::RetrySafe,
+        )
+        .await
+    }
+
+    pub(crate) async fn create_task_payload(
+        &mut self,
+        multisig: &str,
+        request: &CreateTaskPayloadRequest,
+    ) -> Result<CreateTaskPayloadResponse> {
+        let path = format!("/accounts/{multisig}/tasks/create-payload");
+        let body = serde_json::to_value(request)?;
+        // NoRetry: nonce reservation and challenge issuance are write-side effects.
+        self.send_auth(
+            "tasks.create_payload",
+            reqwest::Method::POST,
+            &path,
+            Some(body),
+            RetryPolicy::NoRetry,
+        )
+        .await
+    }
+
+    pub(crate) async fn create_task(
+        &mut self,
+        multisig: &str,
+        challenge_id: &str,
+        signature: &str,
+    ) -> Result<TaskView> {
+        let path = format!("/accounts/{multisig}/tasks");
+        // NoRetry: retrying a successful first POST can become a business error
+        // after the challenge is consumed or the task is created.
+        self.send_auth(
+            "tasks.create",
+            reqwest::Method::POST,
+            &path,
+            Some(json!({
+                "challengeId": challenge_id,
+                "signature": signature,
+            })),
+            RetryPolicy::NoRetry,
         )
         .await
     }

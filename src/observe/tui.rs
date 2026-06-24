@@ -13,7 +13,7 @@ use self::terminal::TerminalGuard;
 use self::types::TuiData;
 use crate::Result;
 
-/// Runs the terminal dashboard against a debug HTTP endpoint.
+/// Runs the terminal dashboard against the RPC HTTP endpoint.
 ///
 /// # Errors
 ///

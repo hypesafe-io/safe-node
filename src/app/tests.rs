@@ -649,7 +649,8 @@ async fn test_runner(
         allowed_leaders: vec![leader.clone()],
         template_input_policies: Default::default(),
         state_db: "sqlite::memory:".to_string(),
-        debug_http_addr: "127.0.0.1:9909".parse().unwrap(),
+        rpc_http_addr: "127.0.0.1:9909".parse().unwrap(),
+        rpc_auth_token: None,
         signer: SignerConfig {
             keystore_path: "test.json".to_string(),
             password_env: None,

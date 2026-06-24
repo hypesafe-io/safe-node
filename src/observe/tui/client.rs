@@ -31,7 +31,7 @@ pub(super) async fn fetch_data(client: &reqwest::Client, url: &str, limit: u32) 
 async fn fetch_json(client: &reqwest::Client, url: &str) -> Result<Value> {
     let response = client.get(url).send().await?;
     let status = response.status();
-    let context = HttpErrorContext::for_request("debug_http.fetch", "GET", url)
+    let context = HttpErrorContext::for_request("rpc_http.fetch", "GET", url)
         .with_response_headers(response.headers());
     let body = response.text().await?;
     if !status.is_success() {

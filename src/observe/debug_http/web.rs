@@ -468,7 +468,7 @@ pub(super) const INDEX_HTML: &str = r#"<!doctype html>
         row("hl api", escapeHtml(config.hl_api_url)),
         row("poll interval", `${escapeHtml(config.poll_interval_secs)}s`),
         row("database", escapeHtml(config.state_db)),
-        row("debug addr", escapeHtml(config.debug_http_addr)),
+        row("rpc addr", escapeHtml(config.rpc_http_addr)),
       ].join("");
     }
 

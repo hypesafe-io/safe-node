@@ -9,7 +9,7 @@ RUN_DIR="$(cd -- "$RUN_DIR" && pwd)"
 
 CONFIG_FILE="${SAFE_NODE_CONFIG_FILE:-/app/config/config.json}"
 ENV_FILE="${SAFE_NODE_ENV_FILE:-$RUN_DIR/.env}"
-DEBUG_HTTP_PORT="${SAFE_NODE_DEBUG_HTTP_PORT:-9909}"
+RPC_HTTP_PORT="${SAFE_NODE_RPC_HTTP_PORT:-9909}"
 
 env_args=()
 if [[ -f "$ENV_FILE" ]]; then
@@ -22,7 +22,7 @@ docker run --detach \
   --user "${SAFE_NODE_UID:-$(id -u)}:${SAFE_NODE_GID:-$(id -g)}" \
   --env HOME=/tmp \
   "${env_args[@]}" \
-  --publish "127.0.0.1:${DEBUG_HTTP_PORT}:9909" \
+  --publish "127.0.0.1:${RPC_HTTP_PORT}:9909" \
   --volume "$RUN_DIR:/app/config:ro" \
   --volume "$RUN_DIR:/app/data" \
   "$IMAGE" \

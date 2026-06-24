@@ -175,6 +175,26 @@ pub(super) struct SigningPayloadResponse {
     pub(super) signing_digest: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CreateTaskPayloadRequest {
+    pub(crate) template_id: String,
+    pub(crate) template_version: i64,
+    pub(crate) inputs: Value,
+    pub(crate) leader: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) network: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) expires_in_secs: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CreateTaskPayloadResponse {
+    pub(crate) challenge_id: String,
+    pub(crate) signing_payload: Value,
+}
+
 #[derive(Debug)]
 pub(crate) struct SigningPayload {
     pub(crate) typed_data: Value,

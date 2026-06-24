@@ -44,7 +44,7 @@ Upgrade an existing install in place:
 - Creator allow-list policy; defaults to the configured `leader` when omitted.
 - Policy rejects are submitted to the gateway as reject votes when possible; no signing or Hyperliquid submission is performed.
 - Local SQLite state, with SQL access through SeaORM.
-- Read-only debug HTTP endpoint in the main service.
+- RPC HTTP service for the TUI read endpoints and node-signed task creation.
 - `safe-node tui` shows recent transactions, config summary, and policy state in the terminal.
 
 ## Commands
@@ -100,11 +100,28 @@ include a local signing spec, the node rebuilds typed-data from
 locally rebuilt payload. For templates without a local signing spec, the node
 falls back to the gateway-provided payload after digest validation.
 
-## Debug HTTP
+## RPC HTTP
 
-When `safe-node run` is active, open `http://127.0.0.1:9909/` for the read-only
-browser dashboard. The JSON endpoints remain available under `/debug/status`,
+When `safe-node run` is active, open `http://127.0.0.1:9909/` for the browser
+dashboard. The TUI/read endpoints remain available under `/debug/status`,
 `/debug/config`, `/debug/policy`, and `/debug/transactions`.
+
+`POST /rpc/task/create` creates a task through the node signer. The request only
+contains template inputs; `safe-node` fixes `creator` to the loaded keystore,
+`leader` to `config.leader`, `multisig` to `config.multisig`, and `network` to
+`mainnet`:
+
+```json
+{
+  "templateId": "withdraw3",
+  "templateVersion": 1,
+  "inputs": { "amount": "1" },
+  "expiresInSecs": 3600
+}
+```
+
+Set `rpc_auth_token` to require `Authorization: Bearer <token>` on write RPC
+endpoints. If `rpc_auth_token` is empty, no RPC auth check is performed.
 
 ## Docker
 
@@ -174,9 +191,10 @@ starting the container. Inside the container, the config path is
 config is `sqlite:data/node.db`, and a typical signer path is
 `config/signer.json`.
 
-For host access to the debug HTTP endpoint, set `debug_http_addr` in the mounted
+For host access to the RPC HTTP endpoint, set `rpc_http_addr` in the mounted
 config to `0.0.0.0:9909`; the service script publishes it on host
-`127.0.0.1:9909` by default.
+`127.0.0.1:9909` by default. Override the host port with
+`SAFE_NODE_RPC_HTTP_PORT`.
 
 ## Releases
 

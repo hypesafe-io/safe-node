@@ -28,8 +28,10 @@ pub(super) struct RawConfig {
     #[serde(default)]
     template_input_policies: BTreeMap<String, BTreeMap<String, Value>>,
     state_db: String,
-    #[serde(default = "default_debug_http_addr")]
-    debug_http_addr: String,
+    #[serde(default = "default_rpc_http_addr")]
+    rpc_http_addr: String,
+    #[serde(default)]
+    rpc_auth_token: Option<String>,
     signer: RawSignerConfig,
     leader: String,
     multisig: String,
@@ -47,7 +49,7 @@ fn default_poll_interval_secs() -> u64 {
     15
 }
 
-fn default_debug_http_addr() -> String {
+fn default_rpc_http_addr() -> String {
     "127.0.0.1:9909".to_string()
 }
 
@@ -93,9 +95,11 @@ impl RawConfig {
                 "withdraw_limit must be non-negative".to_string(),
             ));
         }
-        let debug_http_addr = self.debug_http_addr.parse::<SocketAddr>().map_err(|err| {
-            NodeError::Config(format!("debug_http_addr must be host:port: {err}"))
-        })?;
+        let rpc_http_addr = self
+            .rpc_http_addr
+            .parse::<SocketAddr>()
+            .map_err(|err| NodeError::Config(format!("rpc_http_addr must be host:port: {err}")))?;
+        let rpc_auth_token = normalize_optional_secret(self.rpc_auth_token);
 
         Ok(Config {
             gateway_url: trim_url(&self.gateway_url),
@@ -107,7 +111,8 @@ impl RawConfig {
             allowed_leaders,
             template_input_policies,
             state_db: self.state_db,
-            debug_http_addr,
+            rpc_http_addr,
+            rpc_auth_token,
             signer: SignerConfig {
                 keystore_path: self.signer.keystore_path,
                 password_env: self
@@ -120,6 +125,12 @@ impl RawConfig {
             withdraw_limit,
         })
     }
+}
+
+fn normalize_optional_secret(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn normalize_allowed_addresses(
@@ -293,7 +304,18 @@ mod tests {
             config.allowed_leaders,
             ["0x0000000000000000000000000000000000000001".to_string()]
         );
-        assert!(config.debug_http_addr.ip().is_loopback());
+        assert!(config.rpc_http_addr.ip().is_loopback());
+        assert!(config.rpc_auth_token.is_none());
+    }
+
+    #[test]
+    fn normalizes_rpc_auth_token() {
+        let mut value = base_config();
+        value["rpc_auth_token"] = json!("  token-1  ");
+        let raw: RawConfig = serde_json::from_value(value).unwrap();
+        let config = raw.validate().unwrap();
+
+        assert_eq!(config.rpc_auth_token.as_deref(), Some("token-1"));
     }
 
     #[test]

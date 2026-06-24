@@ -1,9 +1,13 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::Mutex;
 
-use crate::config::RedactedConfig;
+use crate::config::{Config, RedactedConfig};
+use crate::gateway::{GatewayClient, SubAccountRegistry, TemplateRegistry};
+use crate::signing::NodeSigner;
 use crate::state::StateStore;
 
 #[derive(Debug, Clone, Serialize)]
@@ -24,6 +28,34 @@ pub(super) struct DebugAppState {
     pub(super) snapshot: super::snapshot::DebugSnapshot,
     pub(super) state: StateStore,
     pub(super) config: RedactedConfig,
+    pub(super) task: Option<RpcTaskState>,
+}
+
+#[derive(Clone)]
+pub(super) struct RpcTaskState {
+    pub(super) config: Config,
+    pub(super) signer: NodeSigner,
+    pub(super) templates: TemplateRegistry,
+    pub(super) sub_accounts: SubAccountRegistry,
+    pub(super) gateway: Arc<Mutex<GatewayClient>>,
+}
+
+impl RpcTaskState {
+    pub(super) fn new(
+        config: Config,
+        signer: NodeSigner,
+        templates: TemplateRegistry,
+        sub_accounts: SubAccountRegistry,
+        gateway: GatewayClient,
+    ) -> Self {
+        Self {
+            config,
+            signer,
+            templates,
+            sub_accounts,
+            gateway: Arc::new(Mutex::new(gateway)),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

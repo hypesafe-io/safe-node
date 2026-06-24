@@ -3,9 +3,9 @@ mod response;
 mod types;
 
 pub(crate) use client::GatewayClient;
+pub(crate) use types::{
+    CreateTaskPayloadRequest, OuterSigningPayload, SubAccountRegistry, TaskResultRequest, TaskView,
+    TemplateRegistry, TemplateView, TodoType,
+};
 #[cfg(test)]
 pub(crate) use types::{I18nText, TemplateField, TemplateFieldType};
-pub(crate) use types::{
-    OuterSigningPayload, SubAccountRegistry, TaskResultRequest, TaskView, TemplateRegistry,
-    TemplateView, TodoType,
-};

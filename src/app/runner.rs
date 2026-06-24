@@ -25,11 +25,17 @@ const TEMPLATE_REFRESH_INTERVAL_SECS: i64 = 5 * 60;
 /// authentication, local state setup, or a polling cycle fails.
 pub async fn run(config_path: PathBuf) -> Result<()> {
     let mut runner = Runner::start(config_path, None).await?;
+    let rpc_gateway = rpc_gateway_client(&runner.config, &runner.signer).await?;
     let _debug = debug_http::spawn(
-        runner.config.debug_http_addr,
+        runner.config.rpc_http_addr,
         runner.debug.clone(),
         runner.state.clone(),
         runner.config.redacted(),
+        runner.config.clone(),
+        runner.signer.clone(),
+        runner.templates.clone(),
+        runner.sub_accounts.clone(),
+        rpc_gateway,
     );
     runner.run_loop().await
 }
@@ -370,6 +376,12 @@ async fn authenticate_gateway(
         )));
     }
     Ok(())
+}
+
+async fn rpc_gateway_client(config: &Config, signer: &NodeSigner) -> Result<GatewayClient> {
+    let mut gateway = GatewayClient::new(config.gateway_url.clone());
+    authenticate_gateway(&mut gateway, signer, config).await?;
+    Ok(gateway)
 }
 
 async fn fetch_sub_accounts_if_needed(

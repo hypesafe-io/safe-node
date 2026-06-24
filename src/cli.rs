@@ -15,7 +15,7 @@ pub enum Command {
     Run(RunArgs),
     /// Process one polling cycle and exit.
     Once(OnceArgs),
-    /// Show the terminal UI backed by the local debug HTTP endpoint.
+    /// Show the terminal UI backed by the local RPC HTTP endpoint.
     Tui(TuiArgs),
     /// Manage encrypted signer keystores.
     Keystore(KeystoreArgs),
@@ -40,7 +40,7 @@ pub struct OnceArgs {
 
 #[derive(Debug, Args)]
 pub struct TuiArgs {
-    /// Debug HTTP base URL.
+    /// RPC HTTP base URL.
     #[arg(long, default_value = "http://127.0.0.1:9909")]
     pub url: String,
     /// Number of recent transactions to display.
