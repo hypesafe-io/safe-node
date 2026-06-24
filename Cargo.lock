@@ -2544,7 +2544,7 @@ dependencies = [
 [[package]]
 name = "hypesafe-signing-intent"
 version = "0.1.0"
-source = "git+https://github.com/hypesafe-io/hypesafe-signing-intent.git?branch=main#8693b743e0b6a646ee3de46b6bc654deeb023d2f"
+source = "git+https://github.com/hypesafe-io/hypesafe-signing-intent.git?branch=main#675bba94935b7bfc87de0651aae1c83b460f219c"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",

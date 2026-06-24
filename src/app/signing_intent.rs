@@ -54,27 +54,22 @@ pub(super) fn build_and_validate_task_intent(
         })?;
     let nonce = u64::try_from(task.nonce)
         .map_err(|_| format!("task nonce must be non-negative: {}", task.nonce))?;
+    let expires_at = u64::try_from(task.expires_at)
+        .map_err(|_| format!("task expiresAt must be non-negative: {}", task.expires_at))?;
     let network =
         hypesafe_signing_intent::Network::parse(&task.network).map_err(|err| err.to_string())?;
-    let ctx = hypesafe_signing_intent::TaskContext {
+    let ctx = hypesafe_signing_intent::TaskIntentContext {
         multisig_address: &task.multisig_address,
         leader: &task.leader,
         nonce,
+        expires_at,
         network,
         template: &template_spec,
         params: &task.inputs,
     };
     let typed_data =
-        hypesafe_signing_intent::build_signing_payload(&ctx).map_err(|err| err.to_string())?;
-    let recovered = hypesafe_signing_intent::recover_signer(&typed_data, creator_signature)
-        .map_err(|err| err.to_string())?;
-    let recovered = format!("0x{recovered:x}");
-    if !recovered.eq_ignore_ascii_case(task.creator.trim()) {
-        return Err(format!(
-            "creator signature mismatch: task.creator={}, recovered={}",
-            task.creator, recovered
-        ));
-    }
+        hypesafe_signing_intent::build_task_signing_payload(&ctx).map_err(|err| err.to_string())?;
+    validate_creator_signature(task, &typed_data, creator_signature)?;
     if let Some(task_digest) = task.signing_digest.as_deref() {
         validate_typed_data_digest("local signing intent", &typed_data, task_digest)?;
     }
@@ -118,6 +113,8 @@ pub(super) fn build_and_validate_outer_submission(
         })?;
     let nonce = u64::try_from(task.nonce)
         .map_err(|_| format!("task nonce must be non-negative: {}", task.nonce))?;
+    let expires_at = u64::try_from(task.expires_at)
+        .map_err(|_| format!("task expiresAt must be non-negative: {}", task.expires_at))?;
     let network =
         hypesafe_signing_intent::Network::parse(&task.network).map_err(|err| err.to_string())?;
     let ctx = hypesafe_signing_intent::TaskContext {
@@ -128,9 +125,18 @@ pub(super) fn build_and_validate_outer_submission(
         template: &template_spec,
         params: &task.inputs,
     };
+    let intent_ctx = hypesafe_signing_intent::TaskIntentContext {
+        multisig_address: &task.multisig_address,
+        leader: &task.leader,
+        nonce,
+        expires_at,
+        network,
+        template: &template_spec,
+        params: &task.inputs,
+    };
 
-    let inner_typed_data =
-        hypesafe_signing_intent::build_signing_payload(&ctx).map_err(|err| err.to_string())?;
+    let inner_typed_data = hypesafe_signing_intent::build_task_signing_payload(&intent_ctx)
+        .map_err(|err| err.to_string())?;
     validate_creator_signature(task, &inner_typed_data, creator_signature)?;
     if let Some(task_digest) = task.signing_digest.as_deref() {
         validate_typed_data_digest("local signing intent", &inner_typed_data, task_digest)?;
@@ -343,7 +349,12 @@ fn digest_eq(left: &str, right: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use hypesafe_signing_intent::{build_signing_payload, Network, TaskContext, TemplateSpec};
+    use std::convert::TryFrom;
+
+    use hypesafe_signing_intent::{
+        build_signing_payload, build_task_signing_payload, Network, TaskContext, TaskIntentContext,
+        TemplateSpec,
+    };
     use serde_json::json;
 
     use super::{build_and_validate_task_intent, validate_task_signing_payload_digest};
@@ -447,6 +458,53 @@ mod tests {
         }
     }
 
+    fn internal_template(id: &str) -> TemplateView {
+        TemplateView {
+            id: id.to_string(),
+            version: 1,
+            type_name: "risk_rule".to_string(),
+            hl_action_type: None,
+            display_name: text("Risk Rule"),
+            description: text("Risk Rule"),
+            summary: text("Risk Rule"),
+            fields: vec![],
+            signing: Some(json!({ "scheme": "internal" })),
+            exchange: Some(json!({ "supported": false })),
+        }
+    }
+
+    fn internal_task(
+        creator: &str,
+        template_id: &str,
+        inputs: serde_json::Value,
+        signature: Option<String>,
+        digest: Option<String>,
+    ) -> TaskView {
+        TaskView {
+            id: "task-risk-1".to_string(),
+            multisig_address: "0x0000000000000000000000000000000000000002".to_string(),
+            creator: creator.to_string(),
+            leader: "0x0000000000000000000000000000000000000001".to_string(),
+            nonce: 1,
+            network: "mainnet".to_string(),
+            template_id: template_id.to_string(),
+            template_version: 1,
+            inputs,
+            signing_digest: digest,
+            creator_signature: signature,
+            action: None,
+            threshold: 1,
+            status: "pending".to_string(),
+            signatures: vec![],
+            approvals: 0,
+            rejects: 0,
+            rejections: vec![],
+            created_at: 0,
+            expires_at: 999,
+            result: None,
+        }
+    }
+
     fn sign_task_intent(creator: &NodeSigner, template: &TemplateView) -> (String, String) {
         let spec = TemplateSpec::new(
             template.id.clone(),
@@ -467,6 +525,25 @@ mod tests {
         let digest = typed_data_digest_hex(&typed_data).unwrap();
         let signature = creator.sign_and_verify_typed_data(&typed_data).unwrap();
         (signature, digest)
+    }
+
+    fn build_internal_payload(task: &TaskView, template: &TemplateView) -> serde_json::Value {
+        let spec = TemplateSpec::new(
+            template.id.clone(),
+            template.version,
+            template.signing.clone().unwrap(),
+            template.exchange.clone().unwrap(),
+        );
+        let ctx = TaskIntentContext {
+            multisig_address: &task.multisig_address,
+            leader: &task.leader,
+            nonce: u64::try_from(task.nonce).unwrap(),
+            expires_at: u64::try_from(task.expires_at).unwrap(),
+            network: Network::Mainnet,
+            template: &spec,
+            params: &task.inputs,
+        };
+        build_task_signing_payload(&ctx).unwrap()
     }
 
     #[test]
@@ -511,5 +588,95 @@ mod tests {
         let err = build_and_validate_task_intent(&task, Some(&template)).unwrap_err();
 
         assert!(err.contains("creator signature mismatch"));
+    }
+
+    #[test]
+    fn validates_internal_set_risk_rule_intent() {
+        let creator = NodeSigner::random_for_test();
+        let template = internal_template("set_risk_rule");
+        let inputs = json!({
+            "allowedTemplateIds": ["withdraw3"],
+            "leaderAddress": "0x0000000000000000000000000000000000000000",
+            "creatorAddress": "0x0000000000000000000000000000000000000000"
+        });
+        let unsigned = internal_task(creator.address_lc(), "set_risk_rule", inputs, None, None);
+        let payload = build_internal_payload(&unsigned, &template);
+        let digest = typed_data_digest_hex(&payload).unwrap();
+        let signature = creator.sign_and_verify_typed_data(&payload).unwrap();
+        let task = internal_task(
+            creator.address_lc(),
+            "set_risk_rule",
+            unsigned.inputs,
+            Some(signature),
+            Some(digest),
+        );
+
+        let typed_data = build_and_validate_task_intent(&task, Some(&template))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(typed_data["primaryType"], "RiskRuleChange");
+        assert_eq!(typed_data["domain"]["name"], "HypeSafe");
+        assert_eq!(typed_data["message"]["expiresAt"], json!(999_u64));
+        assert!(typed_data["message"]["ruleHash"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("0x") && value.len() == 66));
+    }
+
+    #[test]
+    fn validates_internal_delete_risk_rule_intent() {
+        let creator = NodeSigner::random_for_test();
+        let template = internal_template("delete_risk_rule");
+        let unsigned = internal_task(
+            creator.address_lc(),
+            "delete_risk_rule",
+            json!({}),
+            None,
+            None,
+        );
+        let payload = build_internal_payload(&unsigned, &template);
+        let digest = typed_data_digest_hex(&payload).unwrap();
+        let signature = creator.sign_and_verify_typed_data(&payload).unwrap();
+        let task = internal_task(
+            creator.address_lc(),
+            "delete_risk_rule",
+            unsigned.inputs,
+            Some(signature),
+            Some(digest),
+        );
+
+        let typed_data = build_and_validate_task_intent(&task, Some(&template))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(typed_data["primaryType"], "RiskRuleChange");
+        assert!(typed_data["message"]["ruleHash"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("0x") && value.len() == 66));
+    }
+
+    #[test]
+    fn rejects_internal_set_risk_rule_digest_mismatch() {
+        let creator = NodeSigner::random_for_test();
+        let template = internal_template("set_risk_rule");
+        let inputs = json!({
+            "allowedTemplateIds": ["withdraw3"],
+            "leaderAddress": "0x0000000000000000000000000000000000000000",
+            "creatorAddress": "0x0000000000000000000000000000000000000000"
+        });
+        let unsigned = internal_task(creator.address_lc(), "set_risk_rule", inputs, None, None);
+        let payload = build_internal_payload(&unsigned, &template);
+        let signature = creator.sign_and_verify_typed_data(&payload).unwrap();
+        let task = internal_task(
+            creator.address_lc(),
+            "set_risk_rule",
+            unsigned.inputs,
+            Some(signature),
+            Some(format!("0x{}", "00".repeat(32))),
+        );
+
+        let err = build_and_validate_task_intent(&task, Some(&template)).unwrap_err();
+
+        assert!(err.contains("local signing intent digest mismatch"));
     }
 }
