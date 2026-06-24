@@ -2,196 +2,93 @@
 
 [English](README.md) | 中文
 
-`safe-node` 是 HypeSafe 的本地签名与风控节点，不是 Node.js 服务，也不是链节点。
+`safe-node` 是 HypeSafe 的自托管签名与风控节点，不是 Node.js 服务，也不是链节点。
 
-它从 `safe-gateway` 拉取指定 multi-sig 的任务，并按本地规则处理指定 `leader` 下被允许的 task template。普通 signer 节点只协签；当本机 signer 等于 `leader` 时，该节点还会为链上模板提交 Hyperliquid `/exchange` 并把结果写回 gateway。
+节点使用本地加密 keystore 登录 `safe-gateway`，跟踪一个配置好的 Hyperliquid
+multi-sig 账户，按本地策略判断任务并为允许的任务签名。当本机 signer 在
+`allowed_leaders` 中时，节点还会处理可执行任务；只有任务的 leader 是本机 signer
+时才会提交到 Hyperliquid。
 
 ## 安装
 
-从当前仓库用 `curl` 下载安装脚本，脚本会自动识别 latest release，把对应的
-release 二进制下载到当前目录，校验 SHA-256，并从 release tag 同步
-`config/example.node.json`，同时写入 `latest` 和 `upgrade.sh`：
+安装最新 release：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | bash
 ```
 
-安装指定 tag：
+可选环境变量：
+
+- `SAFE_NODE_TAG`：安装指定 release tag。
+- `SAFE_NODE_INSTALL_DIR`：指定安装目录。
+
+本地构建：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_TAG=v0.1.0 bash
-```
-
-指定安装目录：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_INSTALL_DIR="$HOME/safe-node" bash
-```
-
-原地升级已有安装：
-
-```bash
-./upgrade.sh
-```
-
-## 功能
-
-- 兼容 JSON5 的配置，默认读取 `config/node.json`。
-- 加密 keystore，本地解密后签名。
-- keystore 密码可来自环境变量；如果环境变量为空，则启动时手动输入。
-- template allow list 风控；对声明了 `amount` 字段的模板额外应用金额限额。
-- creator allow list 风控；缺省为配置里的 `leader`。
-- policy reject 会尽量提交到 gateway 作为正式拒绝投票；不会签名，也不会提交 Hyperliquid。
-- 本地状态使用 SQLite，SQL 操作通过 SeaORM。
-- 主服务提供 RPC HTTP：TUI 只读接口和由 node signer 发起 task 的写接口共用同一端口。
-- `safe-node tui` 在 terminal 中展示最近交易、配置摘要和风控规则。
-
-## 常用命令
-
-```bash
-safe-node keystore generate --out config/signer.json
-safe-node keystore import --out config/signer.json
-safe-node run
-safe-node once --dry-run
-safe-node tui
-```
-
-`--config` 可以缺省；需要指定其他配置文件时使用：
-
-```bash
-safe-node run --config config/node.json
+cargo build --release --locked
 ```
 
 ## 配置
 
-使用 `config/example.node.json` 作为兼容 JSON5 的全量配置模板：
+`safe-node` 默认读取 `config/node.json`，配置格式兼容 JSON5：
 
 ```bash
 cp config/example.node.json config/node.json
+safe-node keystore generate --out config/signer.json
 ```
 
-启动节点前，修改复制后的配置，填入真实的 `leader`、`multisig`、signer
-keystore 路径和风控参数。
+启动前修改 `config/node.json`：
 
-配置加载器接受 JSON5，因此本地配置可以包含字段注释和尾逗号，同时继续使用现有
-`config/node.json` 默认路径。
+- 设置 `leader`、`multisig` 和 `signer.keystore_path`。
+- 如果希望从环境变量读取 keystore 密码，设置 `signer.password_env`。
+- 收窄 `allowed_templates`、`allowed_creators`、`allowed_leaders` 到本节点信任的
+  地址和任务类型。
+- 使用 `template_input_policies` 配置模板级金额上限和目标地址 allow list。
+  `withdraw_limit` 仍作为带 `amount` 输入、且没有模板级金额规则时的 fallback。
 
-`allowed_templates` 是 task template allow list。这里使用 gateway `template_id`
-字符串，不是固定枚举。`config/example.node.json` 已列出当前 gateway 暴露的全部签名模板；
-如果 node 只应签部分业务，可以收窄这个列表。内置缺省值仍保持保守：
+`allowed_creators` 或 `allowed_leaders` 为空时会默认使用 `leader`。
+省略 `allowed_templates` 时默认只允许 `withdraw3` 和 `sub_account_withdraw3`。
 
-- `withdraw3`
-- `sub_account_withdraw3`
+## 常用命令
 
-`allowed_creators` 是 task creator allow list。如果缺省，会自动使用配置里的
-`leader`。当 node 需要接受其他可信地址创建的 task 时，显式配置这个列表。
+```bash
+safe-node run
+safe-node run --config config/node.json
+safe-node once --dry-run
+safe-node tui
+safe-node keystore import --out config/signer.json
+```
 
-## 签名信任边界
-
-签名前，`safe-node` 会校验 task 元数据、gateway signing payload 和 EIP-712
-typed-data 声明的 digest 是否一致。对于带本地 signing spec 的模板，node 会从
-`template + inputs + ctx` 本地重建 typed-data，校验 task creator signature，并签名
-本地重建的 payload。对于没有本地 signing spec 的模板，node 会在 digest 校验通过后
-回退使用 gateway-provided payload。
+`run` 启动轮询和本地 RPC HTTP 服务。`once` 只处理一轮。`tui` 读取正在运行节点的
+RPC HTTP 接口。
 
 ## RPC HTTP
 
-`safe-node run` 运行后，打开 `http://127.0.0.1:9909/` 可以访问浏览器 dashboard。
-TUI/只读 JSON 接口仍保留在 `/debug/status`、`/debug/config`、`/debug/policy` 和
-`/debug/transactions`。
+`safe-node run` 默认监听 `http://127.0.0.1:9909/`：
 
-`POST /rpc/task/create` 通过 node 当前加载的 keystore 发起 task。请求只传模板输入；
-`safe-node` 固定使用 keystore signer 作为 `creator`、`config.leader` 作为
-`leader`、`config.multisig` 作为 `multisig`，并固定使用 `mainnet`：
+- `/`：浏览器 dashboard。
+- `/debug/status`、`/debug/config`、`/debug/policy`、`/debug/transactions`：只读
+  JSON 接口。
+- `POST /rpc/task/create`：使用 node signer 创建 task。
 
-```json
-{
-  "templateId": "withdraw3",
-  "templateVersion": 1,
-  "inputs": { "amount": "1" },
-  "expiresInSecs": 3600
-}
-```
-
-配置 `rpc_auth_token` 后，写 RPC 需要 `Authorization: Bearer <token>`；为空时不做
-RPC 鉴权检查。
+配置 `rpc_auth_token` 后，写 RPC 需要 `Authorization: Bearer <token>`。如果把
+`rpc_http_addr` 绑定到非 localhost 地址，应同时配置 token。
 
 ## Docker
 
-构建本地镜像：
+构建镜像并作为服务运行：
 
 ```bash
 ./scripts/docker-build.sh
-```
-
-默认镜像名是 `hypesafe/safe-node:local`。需要覆盖时使用：
-
-```bash
-SAFE_NODE_IMAGE=registry.example.com/hypesafe/safe-node:tag ./scripts/docker-build.sh
-```
-
-镜像入口是 `safe-node`，默认命令是 `run`，所以同一个镜像既可以作为常驻服务，也可以作为一次性 executor。
-
-作为一次性 executor 运行：
-
-```bash
-./scripts/docker-run-executor.sh --dry-run
-```
-
-等价的直接 Docker 命令：
-
-```bash
-docker run --rm \
-  --user "$(id -u):$(id -g)" \
-  --env HOME=/tmp \
-  --volume "$PWD:/app/config:ro" \
-  --volume "$PWD:/app/data" \
-  hypesafe/safe-node:local \
-  once --config /app/config/config.json --dry-run
-```
-
-作为常驻服务启动：
-
-```bash
 ./scripts/docker-run-service.sh
-docker logs -f safe-node
 ```
 
-等价的直接 Docker 命令：
+只运行一轮轮询：
 
 ```bash
-docker run --detach \
-  --name safe-node \
-  --restart unless-stopped \
-  --user "$(id -u):$(id -g)" \
-  --env HOME=/tmp \
-  --publish 127.0.0.1:9909:9909 \
-  --volume "$PWD:/app/config:ro" \
-  --volume "$PWD:/app/data" \
-  hypesafe/safe-node:local \
-  run --config /app/config/config.json
+SAFE_NODE_DRY_RUN=1 ./scripts/docker-run-executor.sh
 ```
 
-脚本会把当前运行目录同时挂载到容器内 `/app/config` 和 `/app/data`：`/app/config` 只读，
-`/app/data` 可写。容器用当前宿主机 UID/GID 运行，并在运行目录下的 `.env` 存在时自动加载。
-把 `config.json`、SQLite db 文件以及可选的 `signer.json` 等文件放在执行脚本的目录即可。
-可以把 `config/example.node.json` 复制到该目录并命名为 `config.json`，修改后再启动容器。
-容器内配置路径是 `/app/config/config.json`；配置里的 SQLite 路径通常写
-`sqlite:data/node.db`，signer 路径通常写 `config/signer.json`。
-
-如果需要从宿主机访问 RPC HTTP，把挂载配置里的 `rpc_http_addr` 设置为
-`0.0.0.0:9909`；服务脚本默认发布到宿主机 `127.0.0.1:9909`。可通过
-`SAFE_NODE_RPC_HTTP_PORT` 覆盖宿主机端口。
-
-## Releases
-
-使用语义化的 `vMAJOR.MINOR.PATCH` tag 发布。辅助脚本会 bump `Cargo.toml`、
-更新 `Cargo.lock`、运行测试、提交、创建 tag，并在 push 前再次确认：
-
-```bash
-./scripts/release.sh
-```
-
-推送 tag 后会触发 GitHub Actions release workflow。workflow 会构建 Linux x86_64
-二进制、校验 `safe-node --version`，并上传二进制和 SHA-256 校验文件。配置模板不再打进
-release 产物；安装脚本会从对应 tag 同步 `config/example.node.json`。
+Docker helper 默认使用 `hypesafe/safe-node:local`，把 `SAFE_NODE_RUN_DIR` 或当前目录挂载到
+容器内 `/app/config` 和 `/app/data`，并自动加载该目录下的 `.env`。容器内默认配置路径是
+`/app/config/config.json`。

@@ -2,211 +2,100 @@
 
 English | [中文](README.zh-CN.md)
 
-`safe-node` is a local signing and risk-control node for HypeSafe. It is not a Node.js service and not a blockchain node.
+`safe-node` is a self-hosted HypeSafe signer and policy node. It is not a
+Node.js service and not a blockchain node.
 
-It pulls tasks for one configured multi-sig account from `safe-gateway` and handles the task templates allowed by local policy for the configured `leader`. A normal signer node only co-signs. If the local signer equals the configured `leader`, the node also submits Hyperliquid `/exchange` requests for on-chain templates and writes results back to the gateway.
+The node signs in to `safe-gateway` with a local encrypted keystore, tracks one
+configured Hyperliquid multi-sig account, evaluates local policy, and signs
+allowed tasks. When the loaded signer is in `allowed_leaders`, the node also
+handles executable tasks and submits to Hyperliquid only when the task leader is
+the local signer.
 
 ## Install
 
-Install the latest release by downloading the installer script from this
-repository. The script downloads the matching release binary into the current
-directory, verifies its SHA-256 checksum, syncs `config/example.node.json` from
-the release tag, and writes `latest` plus `upgrade.sh`:
+Install the latest release:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | bash
 ```
 
-Install a specific release tag:
+Optional environment variables:
+
+- `SAFE_NODE_TAG`: install a specific release tag.
+- `SAFE_NODE_INSTALL_DIR`: install into a specific directory.
+
+Build locally:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_TAG=v0.1.0 bash
+cargo build --release --locked
 ```
 
-Choose the install directory:
+## Setup
+
+`safe-node` reads JSON5 config from `config/node.json` by default:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hypesafe-io/safe-node/main/scripts/install.sh | SAFE_NODE_INSTALL_DIR="$HOME/safe-node" bash
+cp config/example.node.json config/node.json
+safe-node keystore generate --out config/signer.json
 ```
 
-Upgrade an existing install in place:
+Edit `config/node.json` before running:
 
-```bash
-./upgrade.sh
-```
+- Set `leader`, `multisig`, and `signer.keystore_path`.
+- Set `signer.password_env` if the keystore password should come from an
+  environment variable.
+- Narrow `allowed_templates`, `allowed_creators`, and `allowed_leaders` to the
+  addresses and task types this node should trust.
+- Use `template_input_policies` for per-template amount limits and destination
+  allow lists. `withdraw_limit` remains the fallback for templates with an
+  `amount` input and no template-specific amount rule.
 
-## Features
-
-- JSON5-compatible config, default path: `config/node.json`.
-- Encrypted local keystore for signer keys.
-- Keystore password can come from an environment variable; otherwise it is entered interactively at startup.
-- Template allow-list policy with an amount limit for templates that declare an `amount` field.
-- Creator allow-list policy; defaults to the configured `leader` when omitted.
-- Policy rejects are submitted to the gateway as reject votes when possible; no signing or Hyperliquid submission is performed.
-- Local SQLite state, with SQL access through SeaORM.
-- RPC HTTP service for the TUI read endpoints and node-signed task creation.
-- `safe-node tui` shows recent transactions, config summary, and policy state in the terminal.
+If `allowed_creators` or `allowed_leaders` is omitted, it defaults to `leader`.
+If `allowed_templates` is omitted, it defaults to `withdraw3` and
+`sub_account_withdraw3`.
 
 ## Commands
 
 ```bash
-safe-node keystore generate --out config/signer.json
-safe-node keystore import --out config/signer.json
 safe-node run
+safe-node run --config config/node.json
 safe-node once --dry-run
 safe-node tui
+safe-node keystore import --out config/signer.json
 ```
 
-`--config` is optional. Use it only when a non-default config path is needed:
-
-```bash
-safe-node run --config config/node.json
-```
-
-## Config
-
-Use `config/example.node.json` as the full JSON5-compatible config template:
-
-```bash
-cp config/example.node.json config/node.json
-```
-
-Before running a node, edit the copied config and set the real `leader`,
-`multisig`, signer keystore path, and policy values.
-
-The config loader accepts JSON5 so local config files can include field
-comments and trailing commas while keeping the existing `config/node.json`
-default path.
-
-`allowed_templates` is the task template allow list. Values are plain gateway
-`template_id` strings, not a closed enum. `config/example.node.json` lists every
-current signing template exposed by the gateway; keep the list narrower if the
-node should only sign selected business actions. Built-in defaults remain
-conservative:
-
-- `withdraw3`
-- `sub_account_withdraw3`
-
-`allowed_creators` is the task creator allow list. If omitted, it defaults to
-the configured `leader`. Set it explicitly when this node should accept tasks
-created by additional trusted addresses.
-
-## Signing Trust Boundary
-
-Before signing, `safe-node` verifies that task metadata, gateway signing
-payloads, and EIP-712 typed-data agree on the expected digest. For templates that
-include a local signing spec, the node rebuilds typed-data from
-`template + inputs + ctx`, verifies the task creator signature, and signs the
-locally rebuilt payload. For templates without a local signing spec, the node
-falls back to the gateway-provided payload after digest validation.
+`run` starts the polling loop and local RPC HTTP service. `once` processes a
+single polling cycle. `tui` reads from the running node's RPC HTTP endpoint.
 
 ## RPC HTTP
 
-When `safe-node run` is active, open `http://127.0.0.1:9909/` for the browser
-dashboard. The TUI/read endpoints remain available under `/debug/status`,
-`/debug/config`, `/debug/policy`, and `/debug/transactions`.
+By default, `safe-node run` serves `http://127.0.0.1:9909/`:
 
-`POST /rpc/task/create` creates a task through the node signer. The request only
-contains template inputs; `safe-node` fixes `creator` to the loaded keystore,
-`leader` to `config.leader`, `multisig` to `config.multisig`, and `network` to
-`mainnet`:
+- `/`: browser dashboard.
+- `/debug/status`, `/debug/config`, `/debug/policy`, `/debug/transactions`:
+  read-only JSON endpoints.
+- `POST /rpc/task/create`: creates a task using the node signer.
 
-```json
-{
-  "templateId": "withdraw3",
-  "templateVersion": 1,
-  "inputs": { "amount": "1" },
-  "expiresInSecs": 3600
-}
-```
-
-Set `rpc_auth_token` to require `Authorization: Bearer <token>` on write RPC
-endpoints. If `rpc_auth_token` is empty, no RPC auth check is performed.
+Set `rpc_auth_token` to require `Authorization: Bearer <token>` for write RPC
+endpoints. If `rpc_http_addr` is bound to a non-localhost address, configure a
+token.
 
 ## Docker
 
-Build the local image:
+Build the image and run it as a service:
 
 ```bash
 ./scripts/docker-build.sh
-```
-
-The default image name is `hypesafe/safe-node:local`. Override it when needed:
-
-```bash
-SAFE_NODE_IMAGE=registry.example.com/hypesafe/safe-node:tag ./scripts/docker-build.sh
-```
-
-The image entrypoint is `safe-node` and the default command is `run`, so the
-same image supports both service and one-shot executor modes.
-
-Use the image as a one-shot executor:
-
-```bash
-./scripts/docker-run-executor.sh --dry-run
-```
-
-Equivalent direct Docker command:
-
-```bash
-docker run --rm \
-  --user "$(id -u):$(id -g)" \
-  --env HOME=/tmp \
-  --volume "$PWD:/app/config:ro" \
-  --volume "$PWD:/app/data" \
-  hypesafe/safe-node:local \
-  once --config /app/config/config.json --dry-run
-```
-
-Start the image as a long-running service:
-
-```bash
 ./scripts/docker-run-service.sh
-docker logs -f safe-node
 ```
 
-Equivalent direct Docker command:
+Run one polling cycle:
 
 ```bash
-docker run --detach \
-  --name safe-node \
-  --restart unless-stopped \
-  --user "$(id -u):$(id -g)" \
-  --env HOME=/tmp \
-  --publish 127.0.0.1:9909:9909 \
-  --volume "$PWD:/app/config:ro" \
-  --volume "$PWD:/app/data" \
-  hypesafe/safe-node:local \
-  run --config /app/config/config.json
+SAFE_NODE_DRY_RUN=1 ./scripts/docker-run-executor.sh
 ```
 
-The scripts mount the current working directory into both `/app/config`
-read-only and `/app/data` read-write, run the container with the current host
-UID/GID, and load `.env` from that directory automatically if it exists. Keep
-`config.json`, the SQLite database file, and optional files such as
-`signer.json` in the directory where you run the script. You can copy
-`config/example.node.json` to that directory as `config.json` and edit it before
-starting the container. Inside the container, the config path is
-`/app/config/config.json`; a typical SQLite path in the
-config is `sqlite:data/node.db`, and a typical signer path is
-`config/signer.json`.
-
-For host access to the RPC HTTP endpoint, set `rpc_http_addr` in the mounted
-config to `0.0.0.0:9909`; the service script publishes it on host
-`127.0.0.1:9909` by default. Override the host port with
-`SAFE_NODE_RPC_HTTP_PORT`.
-
-## Releases
-
-Create releases with a semantic `vMAJOR.MINOR.PATCH` tag. The helper script
-bumps `Cargo.toml`, updates `Cargo.lock`, runs tests, commits, creates the tag,
-and asks before pushing:
-
-```bash
-./scripts/release.sh
-```
-
-Pushing the tag starts the GitHub Actions release workflow. The workflow builds
-the Linux x86_64 binary, verifies `safe-node --version`, and uploads the binary
-plus its SHA-256 checksum. Config templates are not packaged into the release
-asset; the installer syncs `config/example.node.json` from the matching tag.
+Docker helper scripts use `hypesafe/safe-node:local` by default, mount
+`SAFE_NODE_RUN_DIR` or the current directory into `/app/config` and `/app/data`,
+and load `.env` from that directory when it exists. Inside the container, the
+default config path is `/app/config/config.json`.
