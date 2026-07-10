@@ -19,6 +19,9 @@ impl Runner {
             .gateway
             .task_inbox(TodoType::Execute, &self.config.multisig)
             .await?;
+        if tasks.iter().any(|task| task.status == "executable") {
+            self.refresh_sub_accounts().await?;
+        }
         for task in tasks {
             if task.status != "executable" {
                 continue;

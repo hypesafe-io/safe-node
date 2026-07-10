@@ -222,7 +222,7 @@ impl Runner {
         }
     }
 
-    async fn refresh_sub_accounts(&mut self) -> Result<()> {
+    pub(super) async fn refresh_sub_accounts(&mut self) -> Result<()> {
         self.sub_accounts = fetch_sub_accounts_if_needed(&mut self.gateway, &self.config).await?;
         Ok(())
     }
