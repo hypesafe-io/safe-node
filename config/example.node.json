@@ -5,8 +5,7 @@
   "dry_run": false,
   "allowed_templates": [
     "approve_sub_account_api_agent",
-    "convert_to_manual_account",
-    "convert_to_unified_account",
+    "convert_account_type",
     "create_sub_account",
     "delete_risk_rule",
     "disable_sub_account",
