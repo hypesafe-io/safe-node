@@ -51,25 +51,29 @@ python3 safe-node/example/create_task.py sub-account-in \
   --amount 1
 ```
 
-This uses the default spot USDC balance:
+By default this transfers from the multisig spot balance into the sub-account
+perp balance:
 
 ```json
 {
   "accountType": "spot",
   "sourceDex": "spot",
-  "destinationDex": "spot",
+  "destinationDex": "",
   "token": "USDC",
   "fromSubAccount": ""
 }
 ```
 
-To use the perp USDC balance instead, pass `--account-type perp`:
+`--account-type` selects the source balance and
+`--destination-account-type` selects the destination balance. For example, to
+transfer perp to perp:
 
 ```sh
 python3 safe-node/example/create_task.py sub-account-in \
   --sub-account 0x2222222222222222222222222222222222222222 \
   --amount 1 \
-  --account-type perp
+  --account-type perp \
+  --destination-account-type perp
 ```
 
 For a specific spot token, keep `--account-type spot` and pass the token value
@@ -80,6 +84,7 @@ python3 safe-node/example/create_task.py sub-account-in \
   --sub-account 0x2222222222222222222222222222222222222222 \
   --amount 1 \
   --account-type spot \
+  --destination-account-type spot \
   --token USDC:0x6d1e7cde53ba9467b783cb7c530ce054
 ```
 
@@ -94,6 +99,10 @@ python3 safe-node/example/create_task.py sub-account-out \
   --multisig 0x3333333333333333333333333333333333333333 \
   --amount 1
 ```
+
+This uses the reverse defaults: the sub-account perp balance is the source and
+the multisig spot balance is the destination. Override either side with
+`--account-type` or `--destination-account-type` when needed.
 
 `--multisig` is sent as `inputs.destination`. The RPC request does not send the
 forbidden top-level fields `creator`, `leader`, `multisig`, or `network`.

@@ -15,7 +15,6 @@ from typing import Any
 DEFAULT_RPC_URL = "http://127.0.0.1:9909"
 CREATE_TASK_PATH = "/rpc/task/create"
 DEFAULT_EXPIRES_IN_SECS = 3600
-DEFAULT_SEND_ASSET_ACCOUNT_TYPE = "spot"
 DEFAULT_SEND_ASSET_TOKEN = "USDC"
 
 
@@ -86,22 +85,19 @@ def send_asset_token(args: argparse.Namespace) -> str:
     return args.token or DEFAULT_SEND_ASSET_TOKEN
 
 
-def send_asset_dex_values(account_type: str) -> tuple[str, str]:
-    if account_type == "spot":
-        return ("spot", "spot")
-    return ("", "")
+def send_asset_dex_value(account_type: str) -> str:
+    return "spot" if account_type == "spot" else ""
 
 
 def build_sub_account_in_payload(args: argparse.Namespace) -> dict[str, Any]:
-    source_dex, destination_dex = send_asset_dex_values(args.account_type)
     return {
         "templateId": "send_asset",
         "templateVersion": 1,
         "inputs": {
             "destination": args.sub_account,
             "accountType": args.account_type,
-            "sourceDex": source_dex,
-            "destinationDex": destination_dex,
+            "sourceDex": send_asset_dex_value(args.account_type),
+            "destinationDex": send_asset_dex_value(args.destination_account_type),
             "token": send_asset_token(args),
             "amount": args.amount,
             "fromSubAccount": "",
@@ -111,15 +107,14 @@ def build_sub_account_in_payload(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def build_sub_account_out_payload(args: argparse.Namespace) -> dict[str, Any]:
-    source_dex, destination_dex = send_asset_dex_values(args.account_type)
     return {
         "templateId": "send_asset",
         "templateVersion": 1,
         "inputs": {
             "destination": args.multisig,
             "accountType": args.account_type,
-            "sourceDex": source_dex,
-            "destinationDex": destination_dex,
+            "sourceDex": send_asset_dex_value(args.account_type),
+            "destinationDex": send_asset_dex_value(args.destination_account_type),
             "token": send_asset_token(args),
             "amount": args.amount,
             "fromSubAccount": args.sub_account,
@@ -137,14 +132,25 @@ def add_common_task_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_send_asset_args(parser: argparse.ArgumentParser) -> None:
+def add_send_asset_args(
+    parser: argparse.ArgumentParser,
+    *,
+    default_source_account_type: str,
+    default_destination_account_type: str,
+) -> None:
     parser.add_argument("--sub-account", required=True, help="configured sub-account address")
     parser.add_argument("--amount", required=True, help="asset amount")
     parser.add_argument(
         "--account-type",
         choices=("perp", "spot"),
-        default=DEFAULT_SEND_ASSET_ACCOUNT_TYPE,
-        help=f"source balance type, default: {DEFAULT_SEND_ASSET_ACCOUNT_TYPE}",
+        default=default_source_account_type,
+        help=f"source balance type, default: {default_source_account_type}",
+    )
+    parser.add_argument(
+        "--destination-account-type",
+        choices=("perp", "spot"),
+        default=default_destination_account_type,
+        help=f"destination balance type, default: {default_destination_account_type}",
     )
     parser.add_argument(
         "--token",
@@ -176,14 +182,22 @@ def parse_args() -> argparse.Namespace:
         "sub-account-in",
         help="transfer from the multisig main account to a sub-account",
     )
-    add_send_asset_args(sub_account_in)
+    add_send_asset_args(
+        sub_account_in,
+        default_source_account_type="spot",
+        default_destination_account_type="perp",
+    )
     sub_account_in.set_defaults(build_payload=build_sub_account_in_payload)
 
     sub_account_out = subparsers.add_parser(
         "sub-account-out",
         help="transfer from a sub-account back to the multisig account",
     )
-    add_send_asset_args(sub_account_out)
+    add_send_asset_args(
+        sub_account_out,
+        default_source_account_type="perp",
+        default_destination_account_type="spot",
+    )
     sub_account_out.add_argument(
         "--multisig",
         required=True,
