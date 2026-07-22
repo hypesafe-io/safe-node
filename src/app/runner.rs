@@ -7,7 +7,9 @@ use super::mode::RunMode;
 use super::shutdown::shutdown_signal;
 use crate::cli::default_config_path;
 use crate::config::Config;
-use crate::gateway::{GatewayClient, SubAccountRegistry, TaskView, TemplateRegistry};
+use crate::gateway::{
+    GatewayClient, SharedSubAccountRegistry, SubAccountRegistry, TaskView, TemplateRegistry,
+};
 use crate::hyperliquid::HlExchangeClient;
 use crate::observe::debug_http;
 use crate::observe::debug_http::{DebugSnapshot, DebugStatus};
@@ -60,7 +62,7 @@ pub(super) struct Runner {
     pub(super) mode: RunMode,
     pub(super) debug: DebugSnapshot,
     pub(super) templates: TemplateRegistry,
-    pub(super) sub_accounts: SubAccountRegistry,
+    pub(super) sub_accounts: SharedSubAccountRegistry,
     pub(super) consecutive_gateway_failures: u64,
     pub(super) last_template_refresh_at: Option<i64>,
 }
@@ -90,6 +92,7 @@ impl Runner {
         authenticate_gateway(&mut gateway, &signer, &config).await?;
         let sub_accounts = fetch_sub_accounts_if_needed(&mut gateway, &config).await?;
         log_send_asset_sub_account_snapshot(&config, &sub_accounts);
+        let sub_accounts = SharedSubAccountRegistry::new(sub_accounts);
 
         let debug = DebugSnapshot::new(DebugStatus {
             signer: signer.address_lc().to_string(),
@@ -223,7 +226,15 @@ impl Runner {
     }
 
     pub(super) async fn refresh_sub_accounts(&mut self) -> Result<()> {
-        self.sub_accounts = fetch_sub_accounts_if_needed(&mut self.gateway, &self.config).await?;
+        let refreshed = fetch_sub_accounts_if_needed(&mut self.gateway, &self.config).await?;
+        if let Some((previous_count, sub_account_count)) =
+            self.sub_accounts.replace(refreshed).await
+        {
+            info!(
+                multisig = self.config.multisig,
+                previous_count, sub_account_count, "refreshed send_asset sub-account allowlist"
+            );
+        }
         Ok(())
     }
 

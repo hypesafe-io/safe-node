@@ -41,6 +41,8 @@ struct ExchangeRequest<'a> {
     signature: HlSignature,
     #[serde(rename = "vaultAddress", skip_serializing_if = "Option::is_none")]
     vault_address: Option<&'a str>,
+    #[serde(rename = "expiresAfter")]
+    expires_after: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +93,7 @@ impl HlExchangeClient {
         nonce: i64,
         signature: &str,
         vault_address: Option<&str>,
+        expires_after: Option<u64>,
     ) -> Result<Value> {
         let signature = signature_to_hl(signature)?;
         let request = ExchangeRequest {
@@ -98,6 +101,7 @@ impl HlExchangeClient {
             nonce,
             signature,
             vault_address,
+            expires_after,
         };
         let url = format!("{}/exchange", self.base_url);
         let mut last_err = None;

@@ -88,6 +88,17 @@ python3 safe-node/example/create_task.py sub-account-in \
   --token USDC:0x6d1e7cde53ba9467b783cb7c530ce054
 ```
 
+To transfer spot USDC into a manual sub-account's XYZ balance:
+
+```sh
+python3 safe-node/example/create_task.py sub-account-in \
+  --sub-account 0x2222222222222222222222222222222222222222 \
+  --amount 10 \
+  --account-type spot \
+  --destination-account-type xyz \
+  --token USDC:0x6d1e7cde53ba9467b783cb7c530ce054
+```
+
 ## Transfer out of a sub-account
 
 Create a `send_asset` task from a configured sub-account back to the configured

@@ -7,7 +7,7 @@ use super::handlers::router;
 use super::snapshot::DebugSnapshot;
 use super::types::DebugAppState;
 use crate::config::{Config, RedactedConfig};
-use crate::gateway::{GatewayClient, SubAccountRegistry, TemplateRegistry};
+use crate::gateway::{GatewayClient, SharedSubAccountRegistry, TemplateRegistry};
 use crate::signing::NodeSigner;
 use crate::state::StateStore;
 use crate::{NodeError, Result};
@@ -20,7 +20,7 @@ pub(crate) fn spawn(
     task_config: Config,
     signer: NodeSigner,
     templates: TemplateRegistry,
-    sub_accounts: SubAccountRegistry,
+    sub_accounts: SharedSubAccountRegistry,
     gateway: GatewayClient,
 ) -> tokio::task::JoinHandle<Result<()>> {
     if requires_remote_rpc_auth_warning(addr, config.rpc_auth_token_configured) {

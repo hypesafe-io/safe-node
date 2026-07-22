@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::RwLock;
 
 use crate::config::{normalize_address, InputPolicyRule, TemplateInputPolicies};
 use crate::{NodeError, Result};
@@ -65,9 +67,14 @@ pub(crate) struct SubAccountView {
     pub(crate) synced_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct SubAccountRegistry {
     addresses: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SharedSubAccountRegistry {
+    inner: Arc<RwLock<SubAccountRegistry>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -210,6 +217,7 @@ pub(crate) struct OuterSigningPayload {
     pub(crate) multi_sig_action: Value,
     #[serde(default)]
     pub(crate) vault_address: Option<String>,
+    pub(crate) expires_after: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -264,6 +272,28 @@ impl SubAccountRegistry {
 
     pub(crate) fn contains_normalized(&self, address: &str) -> bool {
         self.addresses.contains(address)
+    }
+}
+
+impl SharedSubAccountRegistry {
+    pub(crate) fn new(registry: SubAccountRegistry) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(registry)),
+        }
+    }
+
+    pub(crate) async fn snapshot(&self) -> SubAccountRegistry {
+        self.inner.read().await.clone()
+    }
+
+    pub(crate) async fn replace(&self, registry: SubAccountRegistry) -> Option<(usize, usize)> {
+        let mut current = self.inner.write().await;
+        if *current == registry {
+            return None;
+        }
+        let counts = (current.len(), registry.len());
+        *current = registry;
+        Some(counts)
     }
 }
 

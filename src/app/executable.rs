@@ -42,7 +42,8 @@ impl Runner {
                 self.state.record_failed(&task, &err).await?;
                 return Err(NodeError::Signer(err));
             }
-            let decision = evaluate(&self.config, &self.templates, &self.sub_accounts, &task);
+            let sub_accounts = self.sub_accounts.snapshot().await;
+            let decision = evaluate(&self.config, &self.templates, &sub_accounts, &task);
             if decision.is_reject() {
                 self.submit_policy_reject(&task, decision.reason.as_deref())
                     .await?;
@@ -114,6 +115,7 @@ impl Runner {
                     task.nonce,
                     &signature,
                     verified.vault_address.as_deref(),
+                    verified.expires_after,
                 )
                 .await
             {

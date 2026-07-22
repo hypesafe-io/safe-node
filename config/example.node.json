@@ -12,6 +12,7 @@
     "remove_api_agent",
     "send_asset",
     "set_risk_rule",
+    "sub_account_modify",
     "sub_account_transfer",
     "update_multisig",
     "sub_account_withdraw3",

@@ -6,7 +6,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::config::{Config, RedactedConfig};
-use crate::gateway::{GatewayClient, SubAccountRegistry, TemplateRegistry};
+use crate::gateway::{GatewayClient, SharedSubAccountRegistry, TemplateRegistry};
 use crate::signing::NodeSigner;
 use crate::state::StateStore;
 
@@ -36,7 +36,7 @@ pub(super) struct RpcTaskState {
     pub(super) config: Config,
     pub(super) signer: NodeSigner,
     pub(super) templates: TemplateRegistry,
-    pub(super) sub_accounts: SubAccountRegistry,
+    pub(super) sub_accounts: SharedSubAccountRegistry,
     pub(super) gateway: Arc<Mutex<GatewayClient>>,
 }
 
@@ -45,7 +45,7 @@ impl RpcTaskState {
         config: Config,
         signer: NodeSigner,
         templates: TemplateRegistry,
-        sub_accounts: SubAccountRegistry,
+        sub_accounts: SharedSubAccountRegistry,
         gateway: GatewayClient,
     ) -> Self {
         Self {

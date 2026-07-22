@@ -86,7 +86,15 @@ def send_asset_token(args: argparse.Namespace) -> str:
 
 
 def send_asset_dex_value(account_type: str) -> str:
-    return "spot" if account_type == "spot" else ""
+    if account_type == "spot":
+        return "spot"
+    if account_type == "xyz":
+        return "xyz"
+    return ""
+
+
+def send_asset_account_type(account_type: str) -> str:
+    return "spot" if account_type == "spot" else "perp"
 
 
 def build_sub_account_in_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -95,7 +103,7 @@ def build_sub_account_in_payload(args: argparse.Namespace) -> dict[str, Any]:
         "templateVersion": 1,
         "inputs": {
             "destination": args.sub_account,
-            "accountType": args.account_type,
+            "accountType": send_asset_account_type(args.account_type),
             "sourceDex": send_asset_dex_value(args.account_type),
             "destinationDex": send_asset_dex_value(args.destination_account_type),
             "token": send_asset_token(args),
@@ -112,7 +120,7 @@ def build_sub_account_out_payload(args: argparse.Namespace) -> dict[str, Any]:
         "templateVersion": 1,
         "inputs": {
             "destination": args.multisig,
-            "accountType": args.account_type,
+            "accountType": send_asset_account_type(args.account_type),
             "sourceDex": send_asset_dex_value(args.account_type),
             "destinationDex": send_asset_dex_value(args.destination_account_type),
             "token": send_asset_token(args),
@@ -142,13 +150,13 @@ def add_send_asset_args(
     parser.add_argument("--amount", required=True, help="asset amount")
     parser.add_argument(
         "--account-type",
-        choices=("perp", "spot"),
+        choices=("perp", "spot", "xyz"),
         default=default_source_account_type,
         help=f"source balance type, default: {default_source_account_type}",
     )
     parser.add_argument(
         "--destination-account-type",
-        choices=("perp", "spot"),
+        choices=("perp", "spot", "xyz"),
         default=default_destination_account_type,
         help=f"destination balance type, default: {default_destination_account_type}",
     )

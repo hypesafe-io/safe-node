@@ -13,6 +13,7 @@ pub(super) struct VerifiedOuterSubmission {
     pub(super) typed_data: Value,
     pub(super) multi_sig_action: Value,
     pub(super) vault_address: Option<String>,
+    pub(super) expires_after: Option<u64>,
 }
 
 pub(super) fn validate_task_signing_payload_digest(
@@ -115,16 +116,28 @@ pub(super) fn build_and_validate_outer_submission(
         .map_err(|_| format!("task nonce must be non-negative: {}", task.nonce))?;
     let expires_at = u64::try_from(task.expires_at)
         .map_err(|_| format!("task expiresAt must be non-negative: {}", task.expires_at))?;
+    let task_expires_after = expires_at
+        .checked_mul(1_000)
+        .ok_or_else(|| "task expiresAt is too large to convert to milliseconds".to_string())?;
     let network =
         hypesafe_signing_intent::Network::parse(&task.network).map_err(|err| err.to_string())?;
-    let ctx = hypesafe_signing_intent::TaskContext {
+    let mut ctx = hypesafe_signing_intent::TaskContext {
         multisig_address: &task.multisig_address,
         leader: &task.leader,
         nonce,
+        expires_after: Some(task_expires_after),
         network,
         template: &template_spec,
         params: &task.inputs,
     };
+    let expected_expires_after = hypesafe_signing_intent::effective_expires_after(&ctx);
+    if outer.expires_after != expected_expires_after {
+        return Err(format!(
+            "gateway expiresAfter mismatch: expected={expected_expires_after:?}, actual={:?}",
+            outer.expires_after
+        ));
+    }
+    ctx.expires_after = outer.expires_after;
     let intent_ctx = hypesafe_signing_intent::TaskIntentContext {
         multisig_address: &task.multisig_address,
         leader: &task.leader,
@@ -173,6 +186,7 @@ pub(super) fn build_and_validate_outer_submission(
         typed_data,
         multi_sig_action,
         vault_address,
+        expires_after: outer.expires_after,
     })
 }
 
@@ -517,6 +531,7 @@ mod tests {
             multisig_address: "0x0000000000000000000000000000000000000002",
             leader: "0x0000000000000000000000000000000000000001",
             nonce: 1,
+            expires_after: Some(999_000),
             network: Network::Mainnet,
             template: &spec,
             params: &inputs,

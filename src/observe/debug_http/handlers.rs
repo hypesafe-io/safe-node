@@ -11,7 +11,7 @@ use super::types::{DebugAppState, DebugPolicy, DebugStatus, RpcTaskState, Transa
 use super::web::INDEX_HTML;
 use crate::config::normalize_address;
 use crate::config::RedactedConfig;
-use crate::gateway::{CreateTaskPayloadRequest, TaskView};
+use crate::gateway::{CreateTaskPayloadRequest, SubAccountRegistry, TaskView};
 use crate::policy::evaluate;
 use crate::state::{now_secs, RecentTask};
 use crate::{NodeError, Result};
@@ -108,7 +108,8 @@ async fn create_task_with_node_signer(
     state: &RpcTaskState,
     request: CreateTaskRequest,
 ) -> Result<TaskView> {
-    validate_create_task_policy(state, &request)?;
+    let sub_accounts = state.sub_accounts.snapshot().await;
+    validate_create_task_policy(state, &sub_accounts, &request)?;
     let create_payload = CreateTaskPayloadRequest {
         template_id: request.template_id,
         template_version: request.template_version,
@@ -156,7 +157,11 @@ async fn create_task_with_node_signer(
     Ok(created)
 }
 
-fn validate_create_task_policy(state: &RpcTaskState, request: &CreateTaskRequest) -> Result<()> {
+fn validate_create_task_policy(
+    state: &RpcTaskState,
+    sub_accounts: &SubAccountRegistry,
+    request: &CreateTaskRequest,
+) -> Result<()> {
     if state.config.dry_run {
         return Err(NodeError::Config(
             "RPC task creation is disabled in dry_run mode".to_string(),
@@ -197,7 +202,7 @@ fn validate_create_task_policy(state: &RpcTaskState, request: &CreateTaskRequest
         expires_at: now_secs(),
         result: None,
     };
-    let decision = evaluate(&state.config, &state.templates, &state.sub_accounts, &draft);
+    let decision = evaluate(&state.config, &state.templates, sub_accounts, &draft);
     if decision.is_reject() {
         return Err(NodeError::Config(format!(
             "RPC task rejected by local policy `{}`: {}",
@@ -264,8 +269,8 @@ mod tests {
     use super::{index, router};
     use crate::config::{Config, SignerConfig};
     use crate::gateway::{
-        GatewayClient, I18nText, SubAccountRegistry, TemplateField, TemplateFieldType,
-        TemplateRegistry, TemplateView,
+        GatewayClient, I18nText, SharedSubAccountRegistry, SubAccountRegistry, TemplateField,
+        TemplateFieldType, TemplateRegistry, TemplateView,
     };
     use crate::observe::debug_http::types::RpcTaskState;
     use crate::observe::debug_http::{DebugSnapshot, DebugStatus};
@@ -453,20 +458,79 @@ mod tests {
         assert!(body.contains("does not match local signer"));
     }
 
+    #[tokio::test]
+    async fn rpc_task_create_uses_refreshed_sub_account_registry() {
+        let signer = NodeSigner::random_for_test();
+        let gateway = TestGateway::spawn(signer.address_lc(), None).await;
+        let mut config = config_for(signer.address_lc(), gateway.url());
+        config.allowed_templates = vec!["send_asset".to_string()];
+        let sub_accounts = SharedSubAccountRegistry::default();
+        let addr = spawn_rpc_app_with_state(
+            config,
+            signer,
+            GatewayClient::new(gateway.url()),
+            TemplateRegistry::new(vec![send_asset_template()]),
+            sub_accounts.clone(),
+        )
+        .await;
+        let request = send_asset_request();
+
+        let rejected = reqwest::Client::new()
+            .post(format!("http://{addr}/rpc/task/create"))
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        let status = rejected.status();
+        let body = rejected.text().await.unwrap();
+
+        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+        assert!(body.contains("send_asset_sub_accounts"));
+        assert_eq!(gateway.create_payload_count(), 0);
+
+        sub_accounts
+            .replace(SubAccountRegistry::from_addresses(&[
+                "0x00000000000000000000000000000000000000aa",
+            ]))
+            .await;
+
+        let accepted = reqwest::Client::new()
+            .post(format!("http://{addr}/rpc/task/create"))
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(accepted.status(), reqwest::StatusCode::OK);
+        assert_eq!(gateway.create_payload_count(), 1);
+    }
+
     async fn spawn_rpc_app(
         config: Config,
         signer: NodeSigner,
         gateway: Option<GatewayClient>,
     ) -> std::net::SocketAddr {
+        let gateway = gateway.unwrap_or_else(|| GatewayClient::new(config.gateway_url.clone()));
+        spawn_rpc_app_with_state(
+            config,
+            signer,
+            gateway,
+            TemplateRegistry::new(vec![template()]),
+            SharedSubAccountRegistry::default(),
+        )
+        .await
+    }
+
+    async fn spawn_rpc_app_with_state(
+        config: Config,
+        signer: NodeSigner,
+        gateway: GatewayClient,
+        templates: TemplateRegistry,
+        sub_accounts: SharedSubAccountRegistry,
+    ) -> std::net::SocketAddr {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let task = RpcTaskState::new(
-            config.clone(),
-            signer,
-            TemplateRegistry::new(vec![template()]),
-            SubAccountRegistry::default(),
-            gateway.unwrap_or_else(|| GatewayClient::new(config.gateway_url.clone())),
-        );
+        let task = RpcTaskState::new(config.clone(), signer, templates, sub_accounts, gateway);
         let state = super::DebugAppState {
             snapshot: DebugSnapshot::new(debug_status()),
             state: StateStore::connect("sqlite::memory:").await.unwrap(),
@@ -491,6 +555,23 @@ mod tests {
         })
     }
 
+    fn send_asset_request() -> Value {
+        json!({
+            "templateId": "send_asset",
+            "templateVersion": 1,
+            "inputs": {
+                "destination": "0x00000000000000000000000000000000000000aa",
+                "accountType": "spot",
+                "sourceDex": "spot",
+                "destinationDex": "xyz",
+                "token": "USDC:0x6d1e7cde53ba9467b783cb7c530ce054",
+                "amount": "1",
+                "fromSubAccount": ""
+            },
+            "expiresInSecs": 3600
+        })
+    }
+
     fn template() -> TemplateView {
         TemplateView {
             id: "withdraw3".to_string(),
@@ -500,6 +581,27 @@ mod tests {
             display_name: text("Withdraw"),
             description: text("Withdraw"),
             summary: text("Withdraw {{amount}}"),
+            fields: vec![TemplateField {
+                name: "amount".to_string(),
+                field_type: TemplateFieldType::Amount,
+                required: true,
+                label: text("Amount"),
+                description: text("Amount"),
+            }],
+            signing: None,
+            exchange: None,
+        }
+    }
+
+    fn send_asset_template() -> TemplateView {
+        TemplateView {
+            id: "send_asset".to_string(),
+            version: 1,
+            type_name: "send_asset".to_string(),
+            hl_action_type: Some("sendAsset".to_string()),
+            display_name: text("Send Asset"),
+            description: text("Send Asset"),
+            summary: text("Send {{amount}}"),
             fields: vec![TemplateField {
                 name: "amount".to_string(),
                 field_type: TemplateFieldType::Amount,

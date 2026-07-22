@@ -28,8 +28,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [dependencies.hypesafe-signing-intent]
-git = "https://github.com/hypesafe-io/hypesafe-signing-intent.git"
-branch = "main"
+path = "../hypesafe-signing-intent"
 
 [dev-dependencies]
 tempfile = "3.27.0"

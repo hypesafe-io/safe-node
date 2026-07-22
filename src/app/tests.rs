@@ -15,7 +15,7 @@ use super::mode::RunMode;
 use super::runner::{mode_for_signer, Runner};
 use crate::config::{Config, SignerConfig};
 use crate::gateway::{
-    GatewayClient, I18nText, SubAccountRegistry, TaskView, TemplateField, TemplateFieldType,
+    GatewayClient, I18nText, SharedSubAccountRegistry, TaskView, TemplateField, TemplateFieldType,
     TemplateRegistry, TemplateView,
 };
 use crate::hyperliquid::HlExchangeClient;
@@ -688,7 +688,7 @@ async fn test_runner(
         mode,
         debug,
         templates,
-        sub_accounts: SubAccountRegistry::default(),
+        sub_accounts: SharedSubAccountRegistry::default(),
         consecutive_gateway_failures: 0,
         last_template_refresh_at: Some(crate::state::now_secs()),
     }
@@ -836,6 +836,7 @@ fn executable_payloads(signer: &NodeSigner) -> (Value, String, String, Value, Va
         multisig_address: MULTISIG,
         leader: signer.address_lc(),
         nonce: 1,
+        expires_after: Some(999_000),
         network: Network::Mainnet,
         template: &template_spec,
         params: &inputs,
@@ -1097,7 +1098,8 @@ async fn outer_payload(
         "typedData": state.outer_typed_data,
         "outerSigningDigest": state.outer_signing_digest,
         "multiSigAction": state.multi_sig_action,
-        "vaultAddress": state.vault_address
+        "vaultAddress": state.vault_address,
+        "expiresAfter": null
     }))
 }
 
@@ -1265,7 +1267,8 @@ async fn info(State(state): State<HlState>, Json(_body): Json<Value>) -> Respons
     .into_response()
 }
 
-async fn exchange(State(state): State<HlState>, Json(_body): Json<Value>) -> Response {
+async fn exchange(State(state): State<HlState>, Json(body): Json<Value>) -> Response {
+    assert!(body["expiresAfter"].is_null());
     state.exchange_count.fetch_add(1, Ordering::SeqCst);
     (state.status, Json(state.response)).into_response()
 }
